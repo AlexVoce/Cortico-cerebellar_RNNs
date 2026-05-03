@@ -1,4 +1,4 @@
-# alex_utils.py - utility functions for my curriculum learning experiments
+# xxxx_utils.py - utility functions for my curriculum learning experiments
 import torch
 
 def get_grad_norms(model): 
