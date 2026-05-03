@@ -38,7 +38,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, cast
 
 
 # ---------------------------------------------------------------------------
@@ -66,11 +66,12 @@ def _set_active_task(
             - CB trainable iff train_cb
     """
     active_tid = task_names.index(active_task)
+    heads = cast(nn.ModuleList, getattr(model, "heads"))
 
     # Only active head trains
     for tid, _ in enumerate(task_names):
         requires_grad = (tid == active_tid)
-        for p in model.heads[tid].parameters():
+        for p in heads[tid].parameters():
             p.requires_grad = requires_grad
 
     # Route non-head params
@@ -187,7 +188,7 @@ def _train_phase(
     rnn_eat: bool = False,
     rnn_eat_lambda: float = 0.1,
     task_id_cue: bool = False,
-) -> Dict[str, float]:
+) -> float:
     """Run one epoch of training on the active task. Returns mean loss."""
     model.train()
     tid = task_names.index(task_name)
@@ -208,8 +209,9 @@ def _train_phase(
         if not torch.isfinite(loss):
             continue
 
-        if rnn_eat and getattr(model, "_last_eat_loss", None) is not None:
-            loss = loss + rnn_eat_lambda * model._last_eat_loss
+        eat_loss = getattr(model, "_last_eat_loss", None)
+        if rnn_eat and isinstance(eat_loss, torch.Tensor):
+            loss = loss + rnn_eat_lambda * eat_loss
 
         loss.backward()
 
@@ -427,9 +429,10 @@ def continual_train(
 
     if not hasattr(model, "heads"):
         raise ValueError("Model must expose a 'heads' attribute for per-task routing.")
-    if len(model.heads) != len(task_names):
+    heads = cast(nn.ModuleList, getattr(model, "heads"))
+    if len(heads) != len(task_names):
         raise ValueError(
-            f"Model has {len(model.heads)} heads, but plan has {len(task_names)} unique tasks: {task_names}. "
+            f"Model has {len(heads)} heads, but plan has {len(task_names)} unique tasks: {task_names}. "
             "Head count must match unique task count and ordering."
         )
 
@@ -534,6 +537,9 @@ def continual_train(
                 )
                 train_rnn_core = refresh_now
                 train_cb = True
+        else:
+            train_rnn_core = True
+            train_cb = True
 
         _set_active_task(
             model=model,
@@ -707,7 +713,7 @@ def continual_train(
 
             global_epoch += 1
 
-        np.save(os.path.join(subdir, "stats_continual.npy"), stats)
+        np.save(os.path.join(subdir, "stats_continual.npy"), np.array(stats, dtype=object))
         phase_idx += 1
 
     # ---- savings analysis ----
@@ -727,6 +733,6 @@ def continual_train(
                 )
             print(f"    savings ratio: {s['savings_ratio']:.2f}", flush=True)
 
-    np.save(os.path.join(subdir, "stats_continual.npy"), stats)
+    np.save(os.path.join(subdir, "stats_continual.npy"), np.array(stats, dtype=object))
     print("\n[continual] Done.", flush=True)
     return stats
