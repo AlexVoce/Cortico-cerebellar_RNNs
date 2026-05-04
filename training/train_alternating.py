@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import sys
 from save import save_model, find_next_free_network_number
-from alex_utils import get_grad_norms, set_active_module,step_optimizer
+from training.train_utils import get_grad_norms, set_active_module,step_optimizer
 from variants import (
     variant_cb_only,
     variant_cb_only_reservoir,
