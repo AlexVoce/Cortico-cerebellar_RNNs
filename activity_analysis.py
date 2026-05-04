@@ -250,6 +250,7 @@ def plot_two_tasks_full_vs_reservoir_pca_mean_2x2(
     ylim_vals=None,
     figsize=None,
     save_path=None,
+    fig_height=1.1,
     linewidth_pt=397.48499,
     full_color_map=None,
     res_color_map=None,
@@ -279,7 +280,7 @@ def plot_two_tasks_full_vs_reservoir_pca_mean_2x2(
     inches_per_pt = 1 / 72.27
     fig_width = linewidth_pt * inches_per_pt
     if figsize is None:
-        figsize = (fig_width, 2.2)
+        figsize = (fig_width, fig_height)
 
     panel_specs = [
         (task1_title, "Full model", df_full_task1, full_color_map),

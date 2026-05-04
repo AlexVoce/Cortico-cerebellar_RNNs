@@ -100,7 +100,7 @@ def infer_model_dims_from_state_dict(sd):
 
     return dims
 import torch.nn as nn
-from models_cb import ElmanRNNMultiHead
+from model.models_cb import ElmanRNNMultiHead
 
 def load_run_config(run_dir):
     config_path = os.path.join(run_dir, "config.json")
