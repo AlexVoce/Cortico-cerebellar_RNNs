@@ -1,3 +1,4 @@
+# count_params.py
 def count_rnn_params(input_size, hidden_size, bias=True):
     """
     Elman RNN core:

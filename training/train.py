@@ -1,31 +1,20 @@
 import sys
 import os
-# Get the absolute path of the parent directory of 'src'
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-alex_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '../alex_crap'))
-# Add both the parent directory and the 'src' directory to the module search path
-sys.path.insert(0, parent_dir)
-sys.path.insert(0, os.path.join(parent_dir, 'src'))
-sys.path.insert(0, alex_dir)
-
 import torch
 import torch.nn as nn
-
 import numpy as np
 import argparse
 import re
 from tqdm import tqdm
 
-from src.models import RNN_Stack, RNN_Mod
-import src.tasks as tasks
-from src.tasks.task_registry import TASK_SPECS, compute_loss
-from src.utils.save import save_model, find_next_free_network_number,make_unique_dir
-from models_cb import ElmanRNNMultiHead
-from multitask_impl import multitask_train, MULTITASK_TASKS
-from continual_impl import continual_train
-from task_switch_one import switch_train
-from alex_training.train_alternating import train_alternating
-from alex_training.rflo import init_rflo_state, rflo_step
+import tasks.tasks_using as tasks
+from tasks.task_registry import TASK_SPECS, compute_loss
+from save import save_model, find_next_free_network_number,make_unique_dir
+from model.models_cb import ElmanRNNMultiHead
+from tasks.multitask_impl import multitask_train, MULTITASK_TASKS
+from tasks.continual_impl import continual_train
+from tasks.task_switch_one import switch_train
+from training.train_alternating import train_alternating
 
 
 def parse_optional_int(value):
@@ -46,7 +35,7 @@ def train(model,
           spec,
           target_end_n=150,
           threshold_final=98.0,
-          patience=3,
+          patience=1,
           subdir_override=None,
           stage_tag=None):
 
@@ -108,7 +97,6 @@ def train(model,
         for epoch in tqdm(range(num_epochs)):
             losses_step = []
             grad_rnn_step = [] # Track grads per step
-            frac_active_step = [] # Track fraction of active neurons per step
             
             for i in range(TRAINING_STEPS):
 
@@ -120,7 +108,7 @@ def train(model,
                 OPTIMIZER.zero_grad()
                 
                 _, out_heads = model(sequences, return_timewise=spec["timewise_output"])
-                out_heads = out_heads[:len(Ns)] # Select only the heads corresponding to active Ns
+                out_heads = out_heads[:len(Ns)]
                 if not isinstance(out_heads, list):
                     out_heads = [out_heads]
 
@@ -137,7 +125,7 @@ def train(model,
                     loss = task_loss
 
                 loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), max_norm=7.5)  # DO NOT CHANGE
+                nn.utils.clip_grad_norm_(model.parameters(), max_norm=7.5)
                 OPTIMIZER.step()
 
                 losses_step.append(float(loss.item()))
