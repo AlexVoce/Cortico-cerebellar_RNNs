@@ -293,6 +293,7 @@ def average_and_plot_runs_multitask(
     log_y2=True,
     show=True,
     figsize=None,
+    fig_height=1.1,
     sharey_top=False,
     sharey_bottom=False,
     shade_auc=False,
@@ -320,7 +321,7 @@ def average_and_plot_runs_multitask(
     pad_early_stop_tasks = set(pad_early_stop_tasks or [])
 
     n_rows = 2 if plot_lower_metric else 1
-    figsize = (fig_width * scale_factor, 1.1) if figsize is None else figsize
+    figsize = (fig_width * scale_factor,fig_height) if figsize is None else figsize
     # figsize = figsize or (4.5 * n_tasks, 8 if plot_lower_metric else 4.5)
 
     fig, axs = plt.subplots(

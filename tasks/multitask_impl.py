@@ -1,3 +1,5 @@
+# tasks/multitask_impl.py
+
 """
 Multi-task training: DMS + parity + oddball on shared binary sequences.
 
@@ -18,51 +20,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 
-# Pull in the label helper functions from your existing tasks module.
-# Adjust the import path if needed to match your project structure.
-_parent = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-_src    = os.path.join(_parent, 'src')
-for _p in [_parent, _src]:
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
-
-from src.tasks.tasks import (
-    get_match,
-    get_parity,
-    generate_binary_sequence,
-)
+from tasks_using import get_match, get_parity, generate_binary_sequence, get_labels
 
 
 MULTITASK_TASKS = ["dms", "parity"]   # index == head index
-
-
-# ---------------------------------------------------------------------------
-# Oddball label function
-# ---------------------------------------------------------------------------
- 
-def get_oddball_label(seq: torch.Tensor, N: int) -> torch.Tensor:
-    """
-    Volatility oddball label from a binary sequence tensor [T, 1].
- 
-    Context = last N bits before the probe  (seq[-(N+1):-1])
-    Probe   = seq[-1]
- 
-    Stable regime  (transitions <= half of context length): expect probe to
-                   repeat the last context bit.
-    Volatile regime (transitions > half):                   expect probe to
-                   alternate from the last context bit.
- 
-    Returns a scalar long tensor: 1 if probe matches expectation, 0 otherwise.
-    """
-    seq_1d  = seq.squeeze(-1) if seq.dim() == 2 else seq   # [T]
-    context = seq_1d[-(N + 1):-1].float()            # [N]
-    probe   = seq_1d[-1].float()                     # scalar
- 
-    transitions = (context[1:] != context[:-1]).float().sum().item()
-    threshold   = (N - 1) / 2.0
- 
-    expected = context[-1] if transitions <= threshold else 1.0 - context[-1]
-    return (probe == expected).long()
 
 # ---------------------------------------------------------------------------
 # Per-sequence label computation
@@ -87,8 +48,6 @@ def get_labels_for_sequence(
                 lbl = get_match(seq_1d, N)
             elif tname == "parity":
                 lbl = get_parity(seq_1d, N)
-            elif tname == "oddball":
-                lbl = get_oddball_label(seq_1d, N)
             else:
                 raise ValueError(f"Unknown task in MULTITASK_TASKS: {tname}")
             out[tname][N] = lbl
