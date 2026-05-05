@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from alex_utils import step_optimizer
+from training.train_utils import step_optimizer
 from tasks.task_registry import compute_loss
 
 def get_eat_lambda(base_lambda, current_N, decay_start=20, decay_end=35):

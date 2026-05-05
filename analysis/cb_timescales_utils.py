@@ -139,7 +139,7 @@ def build_model_from_config_and_state(cfg: dict, state_dict: dict, device: str =
     sys.path.insert(0, parent_dir)
     sys.path.insert(0, os.path.join(parent_dir, 'src'))
     sys.path.insert(0, alex_dir)
-    from models_cb import ElmanRNNMultiHead
+    from model.models_cb import ElmanRNNMultiHead
 
     model_cfg = cfg["model_config"]["model"]
     cli_args = cfg.get("cli_args", {})

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from cb_timescales_utils import (
+from analysis.cb_timescales_utils import (
     analyze_checkpoint_timescales,
     find_available_Ns_legacy,
     find_multitask_checkpoints,

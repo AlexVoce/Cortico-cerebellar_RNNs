@@ -8,7 +8,7 @@ import torch
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-from rebuild_model_utils import (
+from analysis.rebuild_model_utils import (
     build_model_from_config_and_state,
     load_run_config,
     load_state_dict,

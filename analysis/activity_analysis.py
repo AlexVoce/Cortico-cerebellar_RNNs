@@ -2,8 +2,10 @@ import numpy as np
 from sklearn.decomposition import PCA
 import torch
 import json
-from rebuild_model_utils import find_available_Ns,load_state_dict, load_run_config, build_model_from_config_and_state
+from analysis.rebuild_model_utils import find_available_Ns,load_state_dict, load_run_config, build_model_from_config_and_state
 import os
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator, MaxNLocator
 
 def flatten_activity_from_output(output, key="hidden"):
     """
@@ -234,9 +236,6 @@ def summarize_multi_runs_pca_for_multi_keys(
     return pd.concat(dfs, ignore_index=True)
 
 ### plotting function
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator, MaxNLocator
-import numpy as np
 
 def plot_two_tasks_full_vs_reservoir_pca_mean_2x2(
     df_full_task1,

@@ -111,7 +111,6 @@ class ElmanRNNMultiHead(nn.Module):
         rnn_eat_loss_type: str = 'hidden', # whether the RNN eat own tail loss should be applied to the hidden states ('hidden') or the CB bias itself ('cb')
         debug_stats: bool = False, # if True, collect expensive per-time-step debug stats
         cb_input_size: int = 0, # if > 0, CB bias module will also receive the task input (in addition to the RNN hidden state)
-        cb_max_ratio: float = 1.0, # maximum allowed ratio of CB bias norm to pre-activation norm (to prevent huge biases that destabilize training) - only relevant if use_cb_bias is True
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         super().__init__()
