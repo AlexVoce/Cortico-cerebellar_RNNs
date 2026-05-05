@@ -1358,3 +1358,130 @@ def plot_hidden_class_points_two_tasks_tsne_1row4(
         )
 
     return fig, axs
+
+### Class Separability Decoding
+
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold, cross_val_score
+
+
+def decode_auc_single_output(
+    activity_output,
+    module_key="hidden",
+    cv=5,
+    random_state=0,
+):
+    """
+    Decode binary class from final-timestep activity for one activity_output.
+
+    Returns mean CV ROC-AUC for this one run/N/condition.
+    """
+    X, y = extract_final_module_points(
+        activity_output,
+        module_key=module_key,
+    )
+
+    y = np.asarray(y).astype(int)
+
+    clf = make_pipeline(
+        StandardScaler(),
+        LogisticRegression(
+            penalty="l2",
+            solver="liblinear",
+            max_iter=5000,
+            class_weight="balanced",
+            random_state=random_state,
+        ),
+    )
+
+    skf = StratifiedKFold(
+        n_splits=cv,
+        shuffle=True,
+        random_state=random_state,
+    )
+
+    auc_scores = cross_val_score(
+        clf,
+        X,
+        y,
+        cv=skf,
+        scoring="roc_auc",
+    )
+
+    acc_scores = cross_val_score(
+        clf,
+        X,
+        y,
+        cv=skf,
+        scoring="accuracy",
+    )
+
+    return {
+        "auc_mean_cv": auc_scores.mean(),
+        "auc_sd_cv": auc_scores.std(ddof=1),
+        "acc_mean_cv": acc_scores.mean(),
+        "acc_sd_cv": acc_scores.std(ddof=1),
+        "n_samples": len(y),
+        "n_features": X.shape[1],
+    }
+
+def decode_auc_over_runs_one_N(
+    all_outputs,
+    N,
+    module_key="hidden",
+    conditions=("full", "ablated"),
+    cv=5,
+    random_state=0,
+):
+    """
+    Decode class separability over runs for one N.
+
+    Each run contributes one decoding score per condition.
+    """
+    rows = []
+
+    for run_id, run_dict in all_outputs.items():
+        if N not in run_dict:
+            continue
+
+        for condition in conditions:
+            if condition not in run_dict[N]:
+                continue
+
+            metrics = decode_auc_single_output(
+                run_dict[N][condition],
+                module_key=module_key,
+                cv=cv,
+                random_state=random_state,
+            )
+
+            metrics["run_id"] = run_id
+            metrics["N"] = N
+            metrics["condition"] = condition
+            metrics["module"] = module_key
+
+            rows.append(metrics)
+
+    return pd.DataFrame(rows)
+
+def summarise_decode_across_runs(df_decode_runs):
+    """
+    Summarise decoding scores across runs.
+
+    Reports mean ± SD across runs, not across CV folds.
+    """
+    summary = (
+        df_decode_runs
+        .groupby(["condition", "module", "N"], as_index=False)
+        .agg(
+            auc_mean=("auc_mean_cv", "mean"),
+            auc_sd=("auc_mean_cv", "std"),
+            acc_mean=("acc_mean_cv", "mean"),
+            acc_sd=("acc_mean_cv", "std"),
+            n_runs=("run_id", "nunique"),
+        )
+    )
+
+    return summary

@@ -291,7 +291,7 @@ def plot_cb_vs_rnn_scaling(
         # ax.ticklabel_format(style="sci", axis="x", scilimits=(0, 0))
         ax.spines[["top", "right"]].set_visible(False)
 
-        axes[0].set_ylabel("Epochs\nhalf-max N", fontsize=label_fs)   
+        axes[0].set_ylabel("Epochs to half-max N", fontsize=label_fs)   
     for ax in axes[1:]:
         ax.set_ylabel("")
 
