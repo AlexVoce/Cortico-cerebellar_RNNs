@@ -466,3 +466,172 @@ def plot_two_task_full_vs_reservoir_e_folding_2x2(
     plt.show()
 
     return fig,axs
+def plot_two_task_small_vs_large_e_folding_2x2(
+    avg_df_dms_small,
+    avg_df_dms_large,
+    avg_df_parity_small,
+    avg_df_parity_large,
+    task1_title="DMS",
+    task2_title="Parity",
+    small_title="Small CB-RNN",
+    large_title="Large CB-RNN",
+    modules=("hidden", "gc", "pc", "cb_bias"),
+    show_sem=True,
+    linewidth_pt=397.48499,
+    fig_height=2.4,
+    title=None,
+    savepath=None,
+    ylim_vals=None,
+    figsize=None,
+):
+    """
+    Plot population AC 1/e crossing lag across N in a 2x2 layout.
+
+    Rows:
+        DMS
+        Parity
+
+    Columns:
+        Small CB-RNN
+        Large CB-RNN
+
+    Expected dataframe columns:
+        module
+        N
+        pop_e_folding_lag_mean
+        pop_e_folding_lag_sem
+    """
+
+    small_color_map = {
+        "hidden":  "#20A0C9",
+        "gc":      "#0553CF",
+        "pc":      "#33BBFF",
+        "cb_bias": "#5BD7CD",
+    }
+
+    large_color_map = small_color_map
+
+    nicer_names = {
+        "hidden": "RNN",
+        "gc": "GC",
+        "pc": "PC",
+        "cb_bias": "CB bias",
+    }
+
+    preferred_order = ["hidden", "gc", "pc", "cb_bias"]
+    modules = [m for m in preferred_order if m in modules] + [
+        m for m in modules if m not in preferred_order
+    ]
+
+    inches_per_pt = 1 / 72.27
+    fig_width = linewidth_pt * inches_per_pt
+
+    if figsize is None:
+        figsize = (fig_width, fig_height)
+
+    panel_specs = [
+        (task1_title, small_title, avg_df_dms_small, small_color_map),
+        (task1_title, large_title, avg_df_dms_large, large_color_map),
+        (task2_title, small_title, avg_df_parity_small, small_color_map),
+        (task2_title, large_title, avg_df_parity_large, large_color_map),
+    ]
+
+    fig, axs = plt.subplots(
+        2,
+        2,
+        figsize=figsize,
+        squeeze=False,
+        sharey="row",
+        sharex=False,
+    )
+    axs = axs.flatten()
+
+    label_fs = 9
+    tick_fs = 8
+    title_fs = 9
+    legend_fs = 6
+
+    for ax, (task_title, panel_title, df_use, color_map) in zip(axs, panel_specs):
+        for module in modules:
+            sub = df_use[df_use["module"] == module].sort_values("N")
+
+            if len(sub) == 0:
+                continue
+
+            Nvals = sub["N"].values.astype(float)
+            mean = sub["pop_e_folding_lag_mean"].values.astype(float)
+
+            color = color_map.get(module, "gray")
+            label = nicer_names.get(module, module)
+
+            ax.plot(
+                Nvals,
+                mean,
+                marker="o",
+                linewidth=1,
+                markersize=1.5,
+                label=label,
+                color=color,
+            )
+
+            if show_sem and "pop_e_folding_lag_sem" in sub.columns:
+                sem = sub["pop_e_folding_lag_sem"].values.astype(float)
+
+                ax.fill_between(
+                    Nvals,
+                    mean - sem,
+                    mean + sem,
+                    alpha=0.18,
+                    color=color,
+                    linewidth=0,
+                )
+
+        if ax in (axs[0], axs[1]):
+            ax.set_title(panel_title, fontsize=title_fs)
+
+        ax.tick_params(axis="both", labelsize=tick_fs)
+
+        if ylim_vals is not None:
+            if isinstance(ylim_vals, dict):
+                if task_title in ylim_vals and ylim_vals[task_title] is not None:
+                    ax.set_ylim(ylim_vals[task_title])
+                elif panel_title in ylim_vals and ylim_vals[panel_title] is not None:
+                    ax.set_ylim(ylim_vals[panel_title])
+            else:
+                ax.set_ylim(ylim_vals)
+
+    axs[2].set_xlabel("N", fontsize=label_fs)
+    axs[3].set_xlabel("N", fontsize=label_fs)
+
+    axs[0].set_ylabel("DMS\n" + r"$\tau_{pop}$", fontsize=label_fs)
+    axs[2].set_ylabel("Parity\n" + r"$\tau_{pop}$", fontsize=label_fs)
+
+    # remove all top and right spines for cleaner look
+    for ax in axs:
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+    # Hide duplicated y-axis labels/ticks on right column
+    axs[1].tick_params(axis="y", labelleft=False, left=False)
+    axs[1].spines["left"].set_visible(False)
+
+
+    axs[3].tick_params(axis="y", labelleft=False, left=False)
+    axs[3].spines["left"].set_visible(False)
+
+    # Legends: one for small, one for large, or just bottom panels
+    axs[2].legend(
+        fontsize=legend_fs,
+        loc="upper left",
+        frameon=False,
+    )
+    if title is not None:
+        fig.suptitle(title, fontsize=title_fs)
+
+    plt.tight_layout()
+
+    if savepath is not None:
+        plt.savefig(savepath, format="svg", bbox_inches="tight")
+
+    plt.show()
+
+    return fig, axs

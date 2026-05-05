@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
 
-from tasks_using import get_match, get_parity, generate_binary_sequence, get_labels
+from tasks.tasks_using import get_match, get_parity, generate_binary_sequence
 
 
 MULTITASK_TASKS = ["dms", "parity"]   # index == head index

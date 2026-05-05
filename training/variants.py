@@ -1,5 +1,5 @@
 # alex_training/alternating/variants.py
-from .base import compute_active_set, train_steps, evaluate
+from training.base import compute_active_set, train_steps, evaluate
 import os
 import sys
 

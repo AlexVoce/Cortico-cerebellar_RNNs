@@ -385,3 +385,188 @@ def plot_two_tasks_full_vs_reservoir_pca_mean_2x2(
     plt.show()
 
     return fig, axs
+
+def plot_two_tasks_small_vs_large_pca_mean_2x2(
+    df_small_task1,
+    df_large_task1,
+    df_small_task2,
+    df_large_task2,
+    task1_title="DMS",
+    task2_title="Parity",
+    small_title="GC=256",
+    large_title="GC=512",
+    metric="d90",
+    errorbar="sem",
+    ylim_vals=None,
+    figsize=None,
+    save_path=None,
+    fig_height=1.1,
+    linewidth_pt=397.48499,
+    small_color_map=None,
+    large_color_map=None,
+):
+
+    small_color_map = small_color_map or {
+        "hidden":  "#20A0C9",
+        "gc":      "#0553CF",
+        "pc":      "#33BBFF",
+        "cb_bias": "#5BD7CD",
+    }
+
+    large_color_map = small_color_map
+
+    preferred_order = ["hidden", "gc", "pc", "cb_bias"]
+
+    nicer_names = {
+        "hidden": "RNN",
+        "gc": "GC",
+        "pc": "PC",
+        "cb_bias": "CB bias",
+    }
+
+    inches_per_pt = 1 / 72.27
+    fig_width = linewidth_pt * inches_per_pt
+
+    if figsize is None:
+        figsize = (fig_width, fig_height)
+
+    panel_specs = [
+        (task1_title, small_title, df_small_task1, small_color_map),
+        (task1_title, large_title, df_large_task1, large_color_map),
+        (task2_title, small_title, df_small_task2, small_color_map),
+        (task2_title, large_title, df_large_task2, large_color_map),
+    ]
+
+    fig, axs = plt.subplots(
+        2,
+        2,
+        figsize=figsize,
+        squeeze=False,
+        sharey="row",
+        sharex=False,
+    )
+    axs = axs.flatten()
+
+    label_fs = 9
+    tick_fs = 8
+    title_fs = 9
+    legend_fs = 6
+
+    for ax, (task_title, panel_title, df_use, color_map) in zip(axs, panel_specs):
+        populations = list(df_use["population"].dropna().unique())
+        populations = [p for p in preferred_order if p in populations] + [
+            p for p in populations if p not in preferred_order
+        ]
+
+        grouped = (
+            df_use.groupby(["population", "N"], as_index=False)
+            .agg(
+                mean_val=(metric, "mean"),
+                std_val=(metric, "std"),
+                sem_val=(metric, "sem"),
+            )
+        )
+
+        for population in populations:
+            subdf = grouped[grouped["population"] == population].sort_values("N")
+
+            if len(subdf) == 0:
+                continue
+
+            x = subdf["N"].values.astype(float)
+            y = subdf["mean_val"].values.astype(float)
+
+            c = color_map.get(population, "gray")
+            label = nicer_names.get(population, population)
+
+            ax.plot(
+                x,
+                y,
+                marker="o",
+                linewidth=1.2,
+                markersize=1.7,
+                label=label,
+                color=c,
+            )
+
+            if errorbar == "sem":
+                yerr = subdf["sem_val"].values.astype(float)
+                ax.fill_between(
+                    x,
+                    y - yerr,
+                    y + yerr,
+                    alpha=0.16,
+                    color=c,
+                    linewidth=0,
+                )
+            elif errorbar == "std":
+                yerr = subdf["std_val"].values.astype(float)
+                ax.fill_between(
+                    x,
+                    y - yerr,
+                    y + yerr,
+                    alpha=0.16,
+                    color=c,
+                    linewidth=0,
+                )
+
+        ax.set_xlabel("N", fontsize=label_fs)
+        ax.tick_params(axis="both", labelsize=tick_fs)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.yaxis.set_major_locator(MultipleLocator(5))
+
+        if ax in (axs[0], axs[1]):
+            ax.set_title(panel_title, fontsize=title_fs)
+
+        if ylim_vals is not None:
+            if isinstance(ylim_vals, dict):
+                if task_title in ylim_vals and ylim_vals[task_title] is not None:
+                    ax.set_ylim(ylim_vals[task_title])
+                elif panel_title in ylim_vals and ylim_vals[panel_title] is not None:
+                    ax.set_ylim(ylim_vals[panel_title])
+            elif isinstance(ylim_vals, (list, tuple)):
+                ax.set_ylim(ylim_vals)
+
+    if metric == "d90":
+        metric_label = r"$d_{90}$"
+    elif metric == "d95":
+        metric_label = r"$d_{95}$"
+    else:
+        metric_label = metric
+
+    axs[0].yaxis.set_major_locator(MaxNLocator(nbins=4))
+    axs[2].yaxis.set_major_locator(MaxNLocator(nbins=4))
+
+    axs[0].set_ylabel("DMS\n" + f"{metric_label}", fontsize=label_fs)
+    axs[2].set_ylabel("Parity\n" + f"{metric_label}", fontsize=label_fs)
+
+    # Optional: keep your parity-large tick formatting
+    axs[3].xaxis.set_major_locator(plt.FixedLocator([5, 10, 15]))
+
+    # Legends on bottom row
+    axs[2].legend(
+        fontsize=legend_fs,
+        frameon=False,
+        loc="best",
+    )
+    axs[3].legend(
+        fontsize=legend_fs,
+        frameon=False,
+        loc="upper left",
+    )
+
+    # Remove repeated y tick labels from right column
+    axs[1].tick_params(axis="y", labelleft=False, left=False)
+    axs[1].spines["left"].set_visible(False)
+
+    axs[3].tick_params(axis="y", labelleft=False, left=False)
+    axs[3].spines["left"].set_visible(False)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path, format="svg", bbox_inches="tight")
+
+    plt.show()
+
+    return fig, axs
