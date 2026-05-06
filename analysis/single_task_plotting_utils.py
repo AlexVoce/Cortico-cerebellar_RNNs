@@ -161,17 +161,27 @@ def average_and_plot_runs(
     figsize=(8, 5),
     plot_metric2="loss",
     log_y2=True,
+    show_metric2=True,   # NEW
     show=True,
+    fig_height=3,
     save_path=None,
 ):
+    linewidth= 397.5
+    inches_per_pt = 1 / 72.27
+    fig_width = linewidth * inches_per_pt
     # ---- load + aggregate ----
     agg = {}
     max_L = 0
 
     for name, cfg in groups.items():
         pat = cfg["pattern"]
-        data = _collect_runs(base_dir, pat, clip_len=clip_len, clip_N=clip_N,
-                             pad_early_stops=pad_early_stops)
+        data = _collect_runs(
+            base_dir,
+            pat,
+            clip_len=clip_len,
+            clip_N=clip_N,
+            pad_early_stops=pad_early_stops,
+        )
 
         L = data["clip_len_used"]
         max_L = max(max_L, L)
@@ -184,9 +194,12 @@ def average_and_plot_runs(
             "N_raw": data["N"],
             "loss_raw": data["loss"],
             "acc_raw": data["acc"],
-            "N_mean": N_mean, "N_std": N_std,
-            "loss_mean": loss_mean, "loss_std": loss_std,
-            "acc_mean": acc_mean, "acc_std": acc_std,
+            "N_mean": N_mean,
+            "N_std": N_std,
+            "loss_mean": loss_mean,
+            "loss_std": loss_std,
+            "acc_mean": acc_mean,
+            "acc_std": acc_std,
             "auc": data["auc"],
             "runs": data["runs"],
             "skipped": data["skipped"],
@@ -196,40 +209,87 @@ def average_and_plot_runs(
 
     epochs = np.arange(max_L)
 
+
     # ---- plotting ----
-    fig, axs = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    if figsize is None:
+        figsize = (fig_width, fig_height)
+    label_fs = 9 
+    tick_fs = 8 
+    title_fs = 9
+    if show_metric2:
+        fig, axs = plt.subplots(2, 1, figsize=figsize, sharex=True)
+        ax1, ax2 = axs
+    else:
+        fig, ax1 = plt.subplots(1, 1, figsize=figsize)
+        axs = np.array([ax1])
+        ax2 = None
 
-    ax1 = axs[0]
+    # ---- top subplot: curriculum progression ----
     for name, d in agg.items():
         L = d["L"]
-        ax1.plot(epochs[:L], d["N_mean"], lw=2.5, label=f"{name} (n={len(d['runs'])})", color=d["color"])
-        ax1.fill_between(epochs[:L], d["N_mean"] - d["N_std"], d["N_mean"] + d["N_std"], alpha=0.12, color=d["color"])
-    ax1.set_ylabel("Task Difficulty (N)", fontsize=12, fontweight="bold")
-    ax1.set_title(title, fontsize=14, fontweight="bold")
+        ax1.plot(
+            epochs[:L],
+            d["N_mean"],
+            lw=1.7,
+            label=f"{name}",
+            color=d["color"],
+        )
+        ax1.fill_between(
+            epochs[:L],
+            d["N_mean"] - d["N_std"],
+            d["N_mean"] + d["N_std"],
+            alpha=0.12,
+            color=d["color"],
+        )
+
+    ax1.set_ylabel("Task Difficulty (N)", fontsize=label_fs, fontweight="bold")
+    ax1.set_title(title, fontsize=title_fs, fontweight="bold")
+    ax1.tick_params(axis="both", labelsize=tick_fs)
+    ax1.yaxis.set_major_locator(MaxNLocator(nbins=4))
     ax1.set_xlim(0, max_L - 1)
-    ax1.legend(loc="lower center", frameon=True, fontsize=10)
+    ax1.legend(loc="lower center", frameon=False, fontsize=tick_fs)
 
-    ax2 = axs[1]
-    key_mean = f"{plot_metric2}_mean"
-    key_std = f"{plot_metric2}_std"
-    ylab = "Loss" if plot_metric2 == "loss" else "Accuracy (%)"
+    if not show_metric2:
+        ax1.set_xlabel(x_label, fontsize=label_fs, fontweight="bold")
 
-    for name, d in agg.items():
-        L = d["L"]
-        m = d[key_mean]
-        s = d[key_std]
-        ax2.plot(epochs[:L], m, lw=2, label=name, color=d["color"])
-        ax2.fill_between(epochs[:L], m - s, m + s, alpha=0.12, color=d["color"])
+    # ---- optional lower subplot ----
+    if show_metric2:
+        key_mean = f"{plot_metric2}_mean"
+        key_std = f"{plot_metric2}_std"
+        ylab = "Loss" if plot_metric2 == "loss" else "Accuracy (%)"
 
-    ax2.set_ylabel(ylab, fontsize=12, fontweight="bold")
-    ax2.set_xlabel(x_label, fontsize=12, fontweight="bold")
-    if log_y2 and plot_metric2 == "loss":
-        ax2.set_yscale("log")
-    ax2.legend(frameon=True, fontsize=10)
+        for name, d in agg.items():
+            L = d["L"]
+            m = d[key_mean]
+            s = d[key_std]
+
+            ax2.plot(
+                epochs[:L],
+                m,
+                lw=1.2,
+                label=name,
+                color=d["color"],
+            )
+            ax2.fill_between(
+                epochs[:L],
+                m - s,
+                m + s,
+                alpha=0.12,
+                color=d["color"],
+            )
+
+        ax2.set_ylabel(ylab, fontsize=label_fs, fontweight="bold")
+        ax2.set_xlabel(x_label, fontsize=label_fs, fontweight="bold")
+
+        if log_y2 and plot_metric2 == "loss":
+            ax2.set_yscale("log")
+
+        ax2.legend(frameon=True, fontsize=tick_fs-2)
 
     plt.tight_layout()
+
     if save_path is not None:
-        plt.savefig(save_path, bbox_inches='tight',format='svg')
+        plt.savefig(save_path, bbox_inches="tight", format="svg")
 
     if show:
         plt.show()

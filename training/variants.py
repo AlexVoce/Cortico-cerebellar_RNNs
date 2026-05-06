@@ -1,4 +1,4 @@
-# alex_training/alternating/variants.py
+# training/variants.py
 from training.base import compute_active_set, train_steps, evaluate
 import os
 import sys

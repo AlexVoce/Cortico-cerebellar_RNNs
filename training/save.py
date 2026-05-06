@@ -3,6 +3,17 @@ import os
 import json, hashlib, platform, datetime,sys, time
 import numpy as np
 
+
+def _count_from_params(params):
+    params = list(params)
+    total = sum(p.numel() for p in params)
+    trainable = sum(p.numel() for p in params if p.requires_grad)
+    return {"total": int(total), "trainable": int(trainable)}
+
+
+def _module_param_ids(module):
+    return {id(p) for p in module.parameters()}
+
 def save_model(
     model,
     curriculum_type: str,
@@ -111,9 +122,43 @@ def find_next_free_network_number(
         current_number += 1
 
 def count_params(module):
-    total = sum(p.numel() for p in module.parameters())
-    trainable = sum(p.numel() for p in module.parameters() if p.requires_grad)
-    return {"total": int(total), "trainable": int(trainable)}
+    return _count_from_params(module.parameters())
+
+
+def count_model_params(model):
+    """
+    Model-aware parameter counting that works for both Elman and GRU multi-head models.
+
+    Returns a dict with stable top-level keys used downstream (`total`, `trainable`)
+    plus optional breakdown keys when those submodules exist.
+    """
+    out = count_params(model)
+
+    hparams = getattr(model, "_hparams", {}) or {}
+    out["model_type"] = hparams.get("model_type", model.__class__.__name__)
+
+    # Readout heads (shared across Elman/GRU in this repo)
+    readout_ids = set()
+    if hasattr(model, "heads") and model.heads is not None:
+        out["readout"] = count_params(model.heads)
+        readout_ids = _module_param_ids(model.heads)
+
+    # Optional cerebellar module
+    cb_ids = set()
+    if hasattr(model, "cb") and model.cb is not None:
+        out["cb"] = count_params(model.cb)
+        cb_ids = _module_param_ids(model.cb)
+
+    # Core recurrent params = all params excluding readout and CB params.
+    excluded = readout_ids | cb_ids
+    core_params = [p for p in model.parameters() if id(p) not in excluded]
+    out["core"] = _count_from_params(core_params)
+
+    # Convenience aliases for compatibility/readability.
+    out["rnn"] = dict(out["core"])
+    out["non_cb_trainable"] = int(out["trainable"] - out.get("cb", {"trainable": 0})["trainable"])
+
+    return out
 
 def safe_serialize(obj):
     """Convert argparse Namespace / non-JSON objects into JSON-safe types."""
@@ -161,19 +206,12 @@ def save_run_config(
         },
         "cli_args": safe_serialize(args),
         "model_config": extract_model_config(model) if model is not None else None,
-        "params": count_params(model) if model is not None else None,
+        "params": count_model_params(model) if model is not None else None,
     }
     cfg["argv"] = sys.argv
 
     if model is not None:
-        cfg["params"] = count_params(model)
-        # Optional: split out CB vs non-CB if you have model.cb
-        if hasattr(model, "cb") and model.cb is not None:
-            cfg["params"]["cb"] = count_params(model.cb)
-            # everything else
-            cb_ids = {id(p) for p in model.cb.parameters()}
-            non_cb = [p for p in model.parameters() if id(p) not in cb_ids]
-            cfg["params"]["non_cb_trainable"] = int(sum(p.numel() for p in non_cb if p.requires_grad))
+        cfg["params"] = count_model_params(model)
 
     if extra is not None:
         cfg["extra"] = safe_serialize(extra)
@@ -195,11 +233,8 @@ def extract_model_config(model):
         if hasattr(model.cb, "_hparams"):
             cfg["cerebellum"] = model.cb._hparams
 
-    # Parameter counts (useful & safe)
-    cfg["params"] = {
-        "total": sum(p.numel() for p in model.parameters()),
-        "trainable": sum(p.numel() for p in model.parameters() if p.requires_grad),
-    }
+    # Include model-aware parameter counts (Elman/GRU compatible).
+    cfg["params"] = count_model_params(model)
 
     return cfg
 
