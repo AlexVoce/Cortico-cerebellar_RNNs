@@ -1485,3 +1485,251 @@ def summarise_decode_across_runs(df_decode_runs):
     )
 
     return summary
+
+def decode_auc_over_runs_many_Ns(
+    all_outputs,
+    Ns=None,
+    module_key="hidden",
+    conditions=("full", "ablated"),
+    cv=5,
+    random_state=0,
+):
+    """
+    Decode class separability over multiple Ns and runs.
+
+    Each row is one:
+        run_id x N x condition
+
+    Each value is the mean cross-validated ROC-AUC for that run/N/condition.
+    """
+    rows = []
+
+    for run_id, run_dict in all_outputs.items():
+
+        if Ns is None:
+            Ns_use = sorted(run_dict.keys())
+        else:
+            Ns_use = Ns
+
+        for N in Ns_use:
+            if N not in run_dict:
+                continue
+
+            for condition in conditions:
+                if condition not in run_dict[N]:
+                    continue
+
+                metrics = decode_auc_single_output(
+                    run_dict[N][condition],
+                    module_key=module_key,
+                    cv=cv,
+                    random_state=random_state,
+                )
+
+                metrics["run_id"] = run_id
+                metrics["N"] = N
+                metrics["condition"] = condition
+                metrics["module"] = module_key
+
+                rows.append(metrics)
+
+    return pd.DataFrame(rows)
+
+
+def summarise_decode_across_runs_over_Ns(df_decode):
+    """
+    Summarise decoding scores across independently trained runs
+    for each N and condition.
+
+    SD is across runs, not across CV folds.
+    """
+    summary = (
+        df_decode
+        .groupby(["N", "condition", "module"], as_index=False)
+        .agg(
+            auc_mean=("auc_mean_cv", "mean"),
+            auc_sd=("auc_mean_cv", "std"),
+            acc_mean=("acc_mean_cv", "mean"),
+            acc_sd=("acc_mean_cv", "std"),
+            n_runs=("run_id", "nunique"),
+            n_samples_mean=("n_samples", "mean"),
+            n_features=("n_features", "first"),
+        )
+        .sort_values(["N", "condition"])
+    )
+
+    return summary
+
+def print_auc_for_N(summary_df, task_name, N):
+    rows = summary_df[summary_df["N"] == N].copy()
+
+    condition_order = ["full", "ablated"]
+    rows["condition"] = pd.Categorical(
+        rows["condition"],
+        categories=condition_order,
+        ordered=True,
+    )
+    rows = rows.sort_values("condition")
+
+    for _, row in rows.iterrows():
+        print(
+            f"task={task_name} | {row['condition']} | N={int(row['N'])} | {row['module']}: "
+            f"ROC-AUC = {row['auc_mean']:.3f} ± {row['auc_sd']:.3f} SD "
+            f"across {int(row['n_runs'])} runs"
+        )
+        
+def plot_decode_auc_two_tasks_over_Ns(
+    df_decode_dms,
+    df_decode_parity,
+    task1_title="DMS",
+    task2_title="Parity",
+    condition_order=("full", "ablated"),
+    condition_labels=None,
+    condition_colors=None,
+    show_individual_runs=True,
+    ylim=(0.4, 1.05),
+    linewidth_pt=397.48499,
+    fig_height=2.2,
+    figsize=None,
+    save_path=None,
+):
+    """
+    Plot cross-validated ROC-AUC over N for two tasks.
+
+    Layout:
+        left  = DMS
+        right = Parity
+
+    Thick line = mean across runs.
+    Shaded region = SD across runs.
+    Thin lines = individual runs.
+    """
+
+
+    if condition_labels is None:
+        condition_labels = {
+            "full": "Full",
+            "ablated": "CB ablated",
+        }
+
+    if condition_colors is None:
+        condition_colors = {
+            "full": "salmon",
+            "ablated": "#fcaca3",
+        }
+
+    if figsize is None:
+        inches_per_pt = 1 / 72.27
+        fig_width = linewidth_pt * inches_per_pt
+        figsize = (fig_width, fig_height)
+
+    fig, axs = plt.subplots(
+        1,
+        2,
+        figsize=figsize,
+        sharey=True,
+        squeeze=False,
+    )
+    axs = axs.flatten()
+
+    label_fs = 8
+    tick_fs = 7
+    title_fs = 8
+    legend_fs = 6
+
+    panel_specs = [
+        (axs[0], df_decode_dms, task1_title, True),
+        (axs[1], df_decode_parity, task2_title, False),
+    ]
+
+    for ax, df_decode, title, show_ylabel in panel_specs:
+        for condition in condition_order:
+            sub = df_decode[df_decode["condition"] == condition].copy()
+
+            if len(sub) == 0:
+                continue
+
+            grouped = (
+                sub.groupby("N", as_index=False)
+                .agg(
+                    auc_mean=("auc_mean_cv", "mean"),
+                    auc_sd=("auc_mean_cv", "std"),
+                    n_runs=("run_id", "nunique"),
+                )
+                .sort_values("N")
+            )
+
+            color = condition_colors.get(condition, None)
+            label = condition_labels.get(condition, condition)
+
+            if show_individual_runs:
+                for run_id, run_sub in sub.groupby("run_id"):
+                    run_sub = run_sub.sort_values("N")
+                    ax.plot(
+                        run_sub["N"].values,
+                        run_sub["auc_mean_cv"].values,
+                        color=color,
+                        alpha=0.22,
+                        linewidth=0.8,
+                        zorder=1,
+                    )
+
+            x = grouped["N"].values.astype(float)
+            y = grouped["auc_mean"].values.astype(float)
+            sd = grouped["auc_sd"].values.astype(float)
+
+            ax.plot(
+                x,
+                y,
+                marker="o",
+                linewidth=1.4,
+                markersize=2.5,
+                color=color,
+                label=label,
+                zorder=3,
+            )
+
+            ax.fill_between(
+                x,
+                y - sd,
+                y + sd,
+                color=color,
+                alpha=0.16,
+                linewidth=0,
+                zorder=2,
+            )
+
+        ax.axhline(
+            0.5,
+            linestyle="--",
+            linewidth=1,
+            color="gray",
+            zorder=0,
+        )
+
+        ax.set_title(title, fontsize=title_fs)
+        ax.set_xlabel("N", fontsize=label_fs)
+        ax.set_ylim(*ylim)
+        ax.tick_params(axis="both", labelsize=tick_fs)
+        ax.spines[["top", "right"]].set_visible(False)
+
+        if show_ylabel:
+            ax.set_ylabel("Cross-validated ROC-AUC", fontsize=label_fs)
+        else:
+            ax.tick_params(axis="y", labelleft=False, left=False)
+            ax.spines["left"].set_visible(False)
+
+    axs[1].legend(
+        frameon=False,
+        fontsize=legend_fs,
+        loc="lower right",
+    )
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(save_path, format="svg", bbox_inches="tight")
+
+    plt.show()
+
+    return fig, axs

@@ -19,6 +19,7 @@ class CB_bias(nn.Module):
         pc_dim: int = 64,
         dcn_dim: int = 64,
         input_size: int = 0,
+        use_hidden: bool = True,
         sparsity: float = 0.0,
         scramble: bool = False,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -33,10 +34,17 @@ class CB_bias(nn.Module):
         self.sparsity = sparsity
         self.scramble = scramble
         self.use_input = input_size > 0
+        self.use_hidden = use_hidden
         self.k = int(self.gc_dim * self.sparsity)
         self.device = device
 
-        gc_input_size = self.hidden_size + input_size if self.use_input else self.hidden_size
+        if not self.use_hidden and not self.use_input:
+            raise ValueError("CB_bias requires input_size > 0 when use_hidden is False")
+
+        if self.use_hidden:
+            gc_input_size = self.hidden_size + input_size if self.use_input else self.hidden_size
+        else:
+            gc_input_size = input_size
 
         self.gc = nn.Linear(gc_input_size, self.gc_dim, bias=True)
         self.pc = nn.Linear(self.gc_dim, self.pc_dim, bias=True)
@@ -74,6 +82,7 @@ class CB_bias(nn.Module):
             pc_dim=pc_dim,
             dcn_dim=dcn_dim,
             input_size=input_size,
+            use_hidden=use_hidden,
             sparsity=sparsity,
             scramble=scramble,
         )
@@ -86,7 +95,13 @@ class CB_bias(nn.Module):
         return_all: bool = False,
         scramble: bool = False,
     ):
-        if self.use_input and x is not None:
+        if not self.use_hidden:
+            if not self.use_input:
+                raise ValueError("CB_bias is configured without hidden input but no task input was provided")
+            if x is None:
+                raise ValueError("CB_bias is configured to use input only, but x is None")
+            gc_input = x
+        elif self.use_input and x is not None:
             gc_input = torch.cat([h, x], dim=-1)
         else:
             gc_input = h
@@ -226,6 +241,7 @@ class GRUMultiHeadWithCB(nn.Module):
         cb_sparsity: float = 0.0,
         multiply: bool = False,
         cb_input_size: int = 0,
+        cb_no_hidden: bool = False,
         cb_max_ratio: float = 1.0,
         debug_stats: bool = False,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -241,6 +257,7 @@ class GRUMultiHeadWithCB(nn.Module):
         self.use_cb_bias = use_cb_bias
         self.multiply = multiply
         self.cb_input_size = cb_input_size
+        self.cb_no_hidden = cb_no_hidden
         self.cb_max_ratio = cb_max_ratio
         self.debug_stats = debug_stats
 
@@ -256,12 +273,15 @@ class GRUMultiHeadWithCB(nn.Module):
         )
 
         if self.use_cb_bias:
+            if self.cb_no_hidden and cb_input_size <= 0:
+                raise ValueError("cb_no_hidden=True requires cb_input_size > 0 so CB can receive task input")
             self.cb = CB_bias(
                 hidden_size=hidden_size,
                 gc_dim=cb_gc_dim,
                 pc_dim=cb_pc_dim,
                 dcn_dim=cb_dcn_dim,
                 input_size=cb_input_size,
+                use_hidden=not cb_no_hidden,
                 sparsity=cb_sparsity,
                 scramble=False,
                 device=device,
@@ -291,6 +311,7 @@ class GRUMultiHeadWithCB(nn.Module):
             cb_sparsity=cb_sparsity if use_cb_bias else None,
             multiply=multiply if use_cb_bias else None,
             cb_input_size=cb_input_size if use_cb_bias else None,
+            cb_no_hidden=cb_no_hidden if use_cb_bias else None,
             cb_max_ratio=cb_max_ratio if use_cb_bias else None,
             debug_stats=debug_stats,
         )
@@ -470,7 +491,7 @@ class GRUMultiHeadWithCB(nn.Module):
                         dcn_seq.append(cb_dict["dcn"])
                         cb_bias_seq_full.append(cb_dict["cb_bias"])
                     else:
-                        gc_input_seq.append(torch.zeros(B, self.hidden_size, device=device))
+                        gc_input_seq.append(torch.zeros(B, self.cb.gc.in_features, device=device))
                         gc_seq_full.append(torch.zeros(B, self.cb.gc_dim, device=device))
                         pc_seq.append(torch.zeros(B, self.cb.pc_dim, device=device))
                         dcn_seq.append(torch.zeros(B, self.cb.dcn_dim, device=device))

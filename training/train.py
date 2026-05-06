@@ -321,6 +321,8 @@ if __name__ == '__main__':
     parser.add_argument('--pc_dim',  type=int, default=64)
     parser.add_argument('--dcn_dim', type=int, default=64)
     parser.add_argument('--cb_sees_input', action='store_true', default=False)
+    parser.add_argument('--cb_no_hidden', dest='cb_no_hidden', action='store_true', default=False)
+    parser.add_argument('--cb_sees_hidden', dest='cb_no_hidden', action='store_false')
 
     parser.add_argument('--task_switch', action='store_true', default=False)
     parser.add_argument('--task_switch_plan',    type=str, default='dms,violation,dms')
@@ -473,8 +475,10 @@ if __name__ == '__main__':
         AFFIXES += [f'RNNlr{args.rnn_lr}']
     if args.cb_lr != 0.05:
         AFFIXES += [f'CBlr{args.cb_lr}{"sched" if args.cb_schedule else ""}']
-    if args.cb_sees_input:
+    if args.cb_sees_input or args.cb_no_hidden:
         AFFIXES += ['CBinput']
+    if args.cb_no_hidden:
+        AFFIXES += ['noH']
     if args.alt_variant == 'rnn_then_cb_finetune':
         AFFIXES += ['base_fin']
     elif args.alt_variant == 'interleaved_finetune':
@@ -500,6 +504,7 @@ if __name__ == '__main__':
         num_classes,
         num_readout_heads,
         cb_input_size,
+        cb_no_hidden=False,
     ):
         if args.model_type == "elman":
             return ElmanRNNMultiHead(
@@ -515,6 +520,7 @@ if __name__ == '__main__':
                 bias=BIAS,
                 use_cb_bias=args.use_cb_bias,
                 cb_input_size=cb_input_size,
+                cb_no_hidden=cb_no_hidden,
                 debug_stats=args.debug_forward_stats,
                 train_tau=False,
             ).to(device)
@@ -532,6 +538,7 @@ if __name__ == '__main__':
                 bias=BIAS,
                 use_cb_bias=args.use_cb_bias,
                 cb_input_size=cb_input_size,
+                cb_no_hidden=cb_no_hidden,
                 cb_max_ratio=1.0,
                 debug_stats=args.debug_forward_stats,
                 device=device,
@@ -541,7 +548,7 @@ if __name__ == '__main__':
             raise ValueError(f"Unknown model_type: {args.model_type}")
 
     # --- Build model ---
-    cb_input_size = INPUT_SIZE if args.cb_sees_input else 0
+    cb_input_size = INPUT_SIZE if (args.cb_sees_input or args.cb_no_hidden) else 0
 
     if args.multitask:
         NUM_TASKS = len(MULTITASK_TASKS)
@@ -552,6 +559,7 @@ if __name__ == '__main__':
             num_classes=NUM_CLASSES,
             num_readout_heads=NUM_TASKS,
             cb_input_size=cb_input_size,
+            cb_no_hidden=args.cb_no_hidden,
         )
 
     elif args.continual or args.ct_switch:
@@ -561,7 +569,7 @@ if __name__ == '__main__':
         INPUT_SIZE += 1  # task-ID channel
 
         # Important: if CB sees input, update cb_input_size after INPUT_SIZE changes.
-        cb_input_size = INPUT_SIZE if args.cb_sees_input else 0
+        cb_input_size = INPUT_SIZE if (args.cb_sees_input or args.cb_no_hidden) else 0
 
         rnn = build_model(
             input_size=INPUT_SIZE,
@@ -569,6 +577,7 @@ if __name__ == '__main__':
             num_classes=NUM_CLASSES,
             num_readout_heads=len(unique_tasks),
             cb_input_size=cb_input_size,
+            cb_no_hidden=args.cb_no_hidden,
         )
 
     else:
@@ -578,6 +587,7 @@ if __name__ == '__main__':
             num_classes=NUM_CLASSES,
             num_readout_heads=NUM_READOUT_HEADS,
             cb_input_size=cb_input_size,
+            cb_no_hidden=args.cb_no_hidden,
         )
 
     # --- Optional resume ---
