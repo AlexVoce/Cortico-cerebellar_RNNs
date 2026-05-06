@@ -1,5 +1,6 @@
-# plotting stufff?
+# analysis/single_task_plotting_utils.py
 import os
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, MaxNLocator
@@ -656,5 +657,146 @@ def plot_single_task_summary_bars_multitask(
         fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
     else:
         plt.show()
+
+    return fig, ax
+
+
+def compute_auc_differences_all_pairs(task_aggs, task_dirs, matched_pairs):
+    """
+    Computes AUC differences for all task x matched-model-pair comparisons.
+
+    Assumes:
+        task_aggs[task][model_name]["auc"]
+
+    Returns
+    -------
+    df_diff : pd.DataFrame
+        One row per task x pair.
+    """
+    rows = []
+
+    for task in task_dirs.keys():
+        print(f"\n{task}")
+
+        for pair_name, (cb_model, rnn_model) in matched_pairs.items():
+            if cb_model not in task_aggs[task]:
+                print(f"Skipping {pair_name}: missing {cb_model}")
+                continue
+
+            if rnn_model not in task_aggs[task]:
+                print(f"Skipping {pair_name}: missing {rnn_model}")
+                continue
+
+            auc_cb = np.asarray(task_aggs[task][cb_model]["auc"], dtype=float)
+            auc_rnn = np.asarray(task_aggs[task][rnn_model]["auc"], dtype=float)
+
+            if len(auc_cb) != len(auc_rnn):
+                print(
+                    f"Warning: {task} {pair_name} has unequal lengths: "
+                    f"{cb_model}={len(auc_cb)}, {rnn_model}={len(auc_rnn)}. "
+                    "Truncating to shortest."
+                )
+                n = min(len(auc_cb), len(auc_rnn))
+                auc_cb = auc_cb[:n]
+                auc_rnn = auc_rnn[:n]
+
+            diff = auc_cb - auc_rnn
+
+            mean_diff = np.mean(diff)
+            sd_diff = np.std(diff, ddof=1) if len(diff) > 1 else np.nan
+
+            print(
+                f"{pair_name}: "
+                f"{mean_diff:.4f} ± {sd_diff:.4f} SD, n={len(diff)}"
+            )
+
+            rows.append({
+                "task": task,
+                "pair": pair_name,
+                "cb_model": cb_model,
+                "rnn_model": rnn_model,
+                "mean_diff": mean_diff,
+                "sd_diff": sd_diff,
+                "n": len(diff),
+                "diffs": diff,
+            })
+
+    return pd.DataFrame(rows)
+def plot_auc_differences_all_pairs(
+    df_auc_diffs,
+    pair_order=None,
+    task_order=None,
+    colors=None,
+    figsize=(7, 3.5),
+    save_path=None,
+):
+    """
+    Bar plot of CB-RNN minus matched RNN AUC differences.
+
+    Bars show mean difference.
+    Error bars show SD across repeats.
+    """
+    if pair_order is None:
+        pair_order = list(df_auc_diffs["pair"].unique())
+
+    if task_order is None:
+        task_order = list(df_auc_diffs["task"].unique())
+
+    if colors is None:
+        colors = {
+            "GC64 - RNN128": "#FFD0CB",
+            "GC256 - RNN202": "salmon",
+        }
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    x = np.arange(len(task_order))
+    n_pairs = len(pair_order)
+    width = 0.8 / n_pairs
+
+    for i, pair in enumerate(pair_order):
+        means = []
+        sds = []
+
+        for task in task_order:
+            row = df_auc_diffs[
+                (df_auc_diffs["task"] == task) &
+                (df_auc_diffs["pair"] == pair)
+            ]
+
+            if len(row) == 0:
+                means.append(np.nan)
+                sds.append(np.nan)
+            else:
+                means.append(row["mean_diff"].iloc[0])
+                sds.append(row["sd_diff"].iloc[0])
+
+        offset = (i - (n_pairs - 1) / 2) * width
+
+        ax.bar(
+            x + offset,
+            means,
+            width,
+            yerr=sds,
+            label=pair,
+            color=colors.get(pair, "gray"),
+            capsize=3,
+            linewidth=0.5,
+            edgecolor=None,
+        )
+
+    ax.axhline(0, color="black", linewidth=1)
+    ax.set_ylabel("AUC difference\nCB-RNN − matched RNN")
+    ax.set_xticks(x)
+    ax.set_xticklabels(task_order)
+    ax.legend(frameon=False, fontsize=8)
+    ax.spines[["top", "right"]].set_visible(False)
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        fig.savefig(save_path, format="svg", bbox_inches="tight")
+
+    plt.show()
 
     return fig, ax
