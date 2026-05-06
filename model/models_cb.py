@@ -23,6 +23,7 @@ class CB_bias(nn.Module):
             pc_dim: int = 64,
             dcn_dim: int = 64,
             input_size: int = 0, # if above 0, cb will also receive task input
+            use_hidden: bool = True,
             sparsity: float = 0.0, # not using rn - sets GC layer sparsity (top-k)
             scramble: bool = False, # also not using rn - whether to add noise to the bias
             device: str = "cuda" if torch.cuda.is_available() else "cpu", 
@@ -34,10 +35,17 @@ class CB_bias(nn.Module):
         self.dcn_dim = dcn_dim
         self.sparsity = sparsity
         self.use_input = input_size > 0
+        self.use_hidden = use_hidden
         self.k = int(self.gc_dim * self.sparsity)
         self.device = device
 
-        gc_input_size = self.hidden_size + input_size if self.use_input else self.hidden_size
+        if not self.use_hidden and not self.use_input:
+            raise ValueError("CB_bias requires input_size > 0 when use_hidden is False")
+
+        if self.use_hidden:
+            gc_input_size = self.hidden_size + input_size if self.use_input else self.hidden_size
+        else:
+            gc_input_size = input_size
         self.gc = nn.Linear(gc_input_size, self.gc_dim, bias=True)
         self.pc = nn.Linear(self.gc_dim, self.pc_dim, bias=True)
         self.dcn = nn.Linear(self.pc_dim, self.dcn_dim, bias=True)
@@ -56,6 +64,7 @@ class CB_bias(nn.Module):
         self._hparams = dict(
             input_size=hidden_size,
             gc_dim=gc_dim,
+            use_hidden=use_hidden,
             sparsity=sparsity,
             scramble=scramble,
         )
@@ -68,7 +77,13 @@ class CB_bias(nn.Module):
         return_all: bool = False,
         scramble: bool = False,
     ):
-        if self.use_input and x is not None:
+        if not self.use_hidden:
+            if not self.use_input:
+                raise ValueError("CB_bias is configured without hidden input but no task input was provided")
+            if x is None:
+                raise ValueError("CB_bias is configured to use input only, but x is None")
+            gc_input = x
+        elif self.use_input and x is not None:
             gc_input = torch.cat([h, x], dim=-1)
         else:
             gc_input = h
@@ -106,6 +121,7 @@ class ElmanRNNMultiHead(nn.Module):
         cb_dcn_dim: int = 64, # dimension of DCN layer in CB bias module
         cb_sparsity: float = 0.0, # sparsity of granule cell layer in CB bias module - not using rn 
         multiply: bool = False, # whether CB bias will be applied as multiplactive 
+        cb_no_hidden: bool = False, # if True, CB consumes task input only and not RNN hidden state
         rnn_eat: bool = False, # whether to use CB bias as loss term to encourage the RNN to "eat its own tail" and internalize the CB bias (inspired by Hwang et al. 2023) - only relevant if use_cb_bias is True
         rnn_eat_lambda: float = 0.1, # strength of RNN eat own tail loss term if rnn_eat is True
         rnn_eat_loss_type: str = 'hidden', # whether the RNN eat own tail loss should be applied to the hidden states ('hidden') or the CB bias itself ('cb')
@@ -128,6 +144,7 @@ class ElmanRNNMultiHead(nn.Module):
                 self.register_buffer("tau_param", torch.tensor(self.tau, dtype=torch.float32)) # no training of tau
 
         self.use_cb_bias = use_cb_bias
+        self.cb_no_hidden = cb_no_hidden
 
         # RNN core
         self.inp = nn.Linear(input_size, self.hidden_size, bias=bias)
@@ -139,11 +156,14 @@ class ElmanRNNMultiHead(nn.Module):
 
         # Cerebellar bias module
         if self.use_cb_bias:
+            if self.cb_no_hidden and cb_input_size <= 0:
+                raise ValueError("cb_no_hidden=True requires cb_input_size > 0 so CB can receive task input")
             self.cb = CB_bias(hidden_size=self.hidden_size, 
             gc_dim=cb_gc_dim, 
             pc_dim=cb_pc_dim,
             dcn_dim=cb_dcn_dim,
             input_size=cb_input_size,
+            use_hidden=not cb_no_hidden,
             sparsity=cb_sparsity,
             scramble=False,
             device=device)
@@ -172,6 +192,7 @@ class ElmanRNNMultiHead(nn.Module):
         cb_dcn_dim=cb_dcn_dim if use_cb_bias else None,
         cb_sparsity=cb_sparsity if use_cb_bias else None,
         multiply=multiply if use_cb_bias else None,
+        cb_no_hidden=cb_no_hidden if use_cb_bias else None,
         rnn_eat=rnn_eat if use_cb_bias else None,
         rnn_eat_lambda=rnn_eat_lambda if (use_cb_bias and rnn_eat) else None,
         rnn_eat_loss_type=rnn_eat_loss_type if (use_cb_bias and rnn_eat) else None,
@@ -330,7 +351,7 @@ class ElmanRNNMultiHead(nn.Module):
                         cb_bias_seq_full.append(cb_dict["cb_bias"])
                     else:
                         # should rarely happen, but keep shapes aligned
-                        gc_input_seq.append(torch.zeros(B, self.hidden_size, device=device))
+                        gc_input_seq.append(torch.zeros(B, self.cb.gc.in_features, device=device))
                         gc_seq_full.append(torch.zeros(B, self.cb.gc_dim, device=device))
                         pc_seq.append(torch.zeros(B, self.cb.pc_dim, device=device))
                         dcn_seq.append(torch.zeros(B, self.cb.dcn_dim, device=device))

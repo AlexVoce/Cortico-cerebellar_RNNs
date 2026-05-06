@@ -157,18 +157,22 @@ def build_model_from_config_and_state(cfg: dict, state_dict: dict, device: str =
             cb_gc_dim = state_dict["cb.gc.weight"].shape[0]
             cb_pc_dim = state_dict["cb.pc.weight"].shape[0]
             cb_dcn_dim = state_dict["cb.dcn.weight"].shape[0]
-            cb_input_size = state_dict["cb.gc.weight"].shape[1] - hidden_size
+            cb_gc_in = state_dict["cb.gc.weight"].shape[1]
+            cb_no_hidden = cli_args.get("cb_no_hidden", False)
+            cb_input_size = cb_gc_in if cb_no_hidden else cb_gc_in - hidden_size
         else:
             cb_gc_dim = cli_args.get("gc_dim", 256)
             cb_pc_dim = cli_args.get("pc_dim", 64)
             cb_dcn_dim = cli_args.get("dcn_dim", 64)
             cb_sees_input = cli_args.get("cb_sees_input", False)
-            cb_input_size = input_size if cb_sees_input else 0
+            cb_no_hidden = cli_args.get("cb_no_hidden", False)
+            cb_input_size = input_size if (cb_sees_input or cb_no_hidden) else 0
     else:
         cb_gc_dim = 0
         cb_pc_dim = 64
         cb_dcn_dim = 64
         cb_input_size = 0
+        cb_no_hidden = False
 
     model = ElmanRNNMultiHead(
         input_size=input_size,
@@ -184,6 +188,7 @@ def build_model_from_config_and_state(cfg: dict, state_dict: dict, device: str =
         cb_pc_dim=cb_pc_dim,
         cb_dcn_dim=cb_dcn_dim,
         cb_input_size=cb_input_size,
+        cb_no_hidden=cb_no_hidden,
         multiply=model_cfg["multiply"],
         rnn_eat=model_cfg["rnn_eat"],
         rnn_eat_lambda=model_cfg["rnn_eat_lambda"] if model_cfg["rnn_eat_lambda"] is not None else 0.1,
