@@ -133,12 +133,7 @@ def build_model_from_config_and_state(cfg: dict, state_dict: dict, device: str =
     """
     Builds current ElmanRNNMultiHead from config.json + state_dict.
     """
-    parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    alex_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'alex_crap'))
 
-    sys.path.insert(0, parent_dir)
-    sys.path.insert(0, os.path.join(parent_dir, 'src'))
-    sys.path.insert(0, alex_dir)
     from model.models_cb import ElmanRNNMultiHead
 
     model_cfg = cfg["model_config"]["model"]

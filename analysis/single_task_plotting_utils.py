@@ -788,6 +788,7 @@ def plot_auc_differences_all_pairs(
     task_order=None,
     colors=None,
     figsize=(7, 3.5),
+    fig_height=3.5,
     save_path=None,
 ):
     """
@@ -807,8 +808,15 @@ def plot_auc_differences_all_pairs(
             "GC64 - RNN128": "#FFD0CB",
             "GC256 - RNN202": "salmon",
         }
-
+    
+    linewidth= 397.5
+    inches_per_pt = 1 / 72.27
+    fig_width = linewidth * inches_per_pt
+    if figsize is None:
+        figsize = (fig_width, fig_height)
     fig, ax = plt.subplots(figsize=figsize)
+    label_fs = 9
+    tick_fs = 8
 
     x = np.arange(len(task_order))
     n_pairs = len(pair_order)
@@ -836,7 +844,7 @@ def plot_auc_differences_all_pairs(
         ax.bar(
             x + offset,
             means,
-            width,
+            width-0.05,
             yerr=sds,
             label=pair,
             color=colors.get(pair, "gray"),
@@ -846,10 +854,11 @@ def plot_auc_differences_all_pairs(
         )
 
     ax.axhline(0, color="black", linewidth=1)
-    ax.set_ylabel("AUC difference\nCB-RNN − matched RNN")
+    ax.set_ylabel("AUC difference", fontsize=label_fs)
     ax.set_xticks(x)
-    ax.set_xticklabels(task_order)
-    ax.legend(frameon=False, fontsize=8)
+    ax.set_xticklabels(task_order, fontsize=tick_fs)
+    ax.tick_params(axis="y", labelsize=tick_fs)
+    ax.legend(frameon=False, fontsize=tick_fs)
     ax.spines[["top", "right"]].set_visible(False)
 
     plt.tight_layout()
