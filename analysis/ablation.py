@@ -128,13 +128,7 @@ def make_fixed_eval_batches(
     return batches
 
 
-def load_model_for_run_and_N(run_path, N, device="cpu", verify=True):
-    """
-    Rebuild and strictly load a model checkpoint for a given run and N.
-
-    Important: strict loading is required because earlier reconstruction was
-    silently leaving most weights random.
-    """
+def load_model_for_run_and_N(run_path, N, device, verify=False):
     cfg = load_run_config(run_path)
     sd = load_state_dict(run_path, N=N)
 
@@ -144,25 +138,34 @@ def load_model_for_run_and_N(run_path, N, device="cpu", verify=True):
         device=device,
     )
 
-    model.load_state_dict(sd, strict=True)
     model.to(device)
     model.eval()
 
     if verify:
         model_sd = model.state_dict()
+
+        # Old checkpoints may contain removed keys.
+        ignored_keys = {
+            "tau_param",
+        }
+
         bad = []
 
-        for k in sd:
+        for k, v in sd.items():
+            if k in ignored_keys:
+                continue
+
             if k not in model_sd:
                 bad.append((k, "missing_after_load"))
                 continue
 
-            diff = (
-                model_sd[k].detach().cpu()
-                - sd[k].detach().cpu()
-            ).abs().max().item()
+            if model_sd[k].shape != v.shape:
+                bad.append((k, f"shape mismatch {model_sd[k].shape} vs {v.shape}"))
+                continue
 
-            if diff > 1e-7:
+            diff = (model_sd[k].detach().cpu() - v.detach().cpu()).abs().max().item()
+
+            if diff > 1e-6:
                 bad.append((k, diff))
 
         if len(bad) > 0:

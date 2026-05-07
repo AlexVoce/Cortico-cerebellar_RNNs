@@ -12,7 +12,6 @@ from cb_timescales_utils import (
     find_multitask_checkpoints,
     load_state_dict_from_checkpoint,
     load_state_dict_legacy,
-    make_default_save_name,
     make_random_binary_input,
     make_random_multitask_input,
     save_timescale_result,

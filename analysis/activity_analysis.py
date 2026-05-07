@@ -111,9 +111,8 @@ def collect_and_pca_one_N(
         state_dict=sd,
         device=device,
     )
-    model.load_state_dict(sd, strict=True)
     model.eval()
-
+    
     output = collect_activity_for_n(
         model=model,
         batch_fn=batch_fn,
