@@ -199,7 +199,7 @@ def _collect_epoch_metrics(task_dir, pattern, mode, fraction,
 
 def plot_cb_vs_rnn_scaling(
     task_configs,
-    param_sizes=PARAM_SIZES,
+    param_sizes=None,  # kept only so old calls do not break
     mode="half_global_max",
     fraction=0.5,
     fig_height=1.1,
@@ -208,93 +208,119 @@ def plot_cb_vs_rnn_scaling(
     sharey=True,
 ):
     scale_factor = 1
-    linewidth= 397.5
+    linewidth = 397.5
     inches_per_pt = 1 / 72.27
     fig_width = linewidth * inches_per_pt
 
     label_fs = 9 * scale_factor
     tick_fs = 8 * scale_factor
-    title_fs = 9 * scale_factor
 
     n_tasks = len(task_configs)
     if figsize is None:
-        figsize = (fig_width*scale_factor, fig_height)
+        figsize = (fig_width * scale_factor, fig_height)
 
-    fig, axes = plt.subplots(1, n_tasks, figsize=figsize, sharey=sharey,constrained_layout=True)
+    fig, axes = plt.subplots(
+        1, n_tasks, figsize=figsize, sharey=sharey, constrained_layout=True
+    )
     if n_tasks == 1:
         axes = [axes]
 
     for ax, cfg in zip(axes, task_configs):
-        task_dir  = Path(cfg["task_dir"])
+        task_dir = Path(cfg["task_dir"])
         task_name = cfg["task_name"]
+        groups = cfg["groups"]
 
         global_max_n = cfg.get("global_reference_max_n")
         if global_max_n is None:
             global_max_n = find_max_n_across_all_groups(
-                task_dir, cfg["groups"],
+                task_dir,
+                groups,
                 min_required_epochs=min_required_epochs,
             )
 
-        cb_means,  cb_x_vals  = [], []
-        rnn_means, rnn_x_vals = [], []
+        cb_x_vals, cb_means = [], []
+        rnn_x_vals, rnn_means = [], []
 
-        for size in param_sizes:
-            # ── CB ────────────────────────────────────────────────────────
-            cb_pts = _collect_epoch_metrics(
-                task_dir, size["cb_pattern"], mode, fraction,
-                global_max_n, min_required_epochs,
+        for label, group_cfg in groups.items():
+            pattern = group_cfg["pattern"]
+            color = group_cfg.get("color", "gray")
+
+            pts = _collect_epoch_metrics(
+                task_dir,
+                pattern,
+                mode,
+                fraction,
+                global_max_n,
+                min_required_epochs,
             )
-            if cb_pts:
-                cb_x  = np.mean([p[0] for p in cb_pts])
-                cb_ys = [p[1] for p in cb_pts]
-                ax.scatter(
-                    [cb_x] * len(cb_ys), cb_ys,
-                    color=CB_COLOR, s=10, alpha=0.4,
-                    edgecolors="k", zorder=3,
-                )
-                cb_x_vals.append(cb_x)
-                cb_means.append(np.mean(cb_ys))
 
-            # ── RNN ───────────────────────────────────────────────────────
-            rnn_pts = _collect_epoch_metrics(
-                task_dir, size["rnn_pattern"], mode, fraction,
-                global_max_n, min_required_epochs,
+            if not pts:
+                print(f"[WARNING] No matches for {task_name}: {label} | pattern={pattern}")
+                continue
+
+            x = np.mean([p[0] for p in pts])
+            ys = [p[1] for p in pts]
+
+            print(f"{task_name} | {label} | pattern={pattern} | n={len(ys)}")
+
+            ax.scatter(
+                [x] * len(ys),
+                ys,
+                color=color,
+                s=10,
+                alpha=0.4,
+                edgecolors="k",
+                zorder=3,
             )
-            if rnn_pts:
-                rnn_x  = np.mean([p[0] for p in rnn_pts])
-                rnn_ys = [p[1] for p in rnn_pts]
-                ax.scatter(
-                    [rnn_x] * len(rnn_ys), rnn_ys,
-                    color=RNN_COLOR, s=10, alpha=0.4,
-                    edgecolors="k", zorder=3,
-                )
-                rnn_x_vals.append(rnn_x)
-                rnn_means.append(np.mean(rnn_ys))
 
+            if label.startswith("CB"):
+                cb_x_vals.append(x)
+                cb_means.append(np.mean(ys))
+            elif label.startswith("RNN"):
+                rnn_x_vals.append(x)
+                rnn_means.append(np.mean(ys))
 
-        # ── mean lines ────────────────────────────────────────────────────
+        # Sort before plotting lines, so the line follows increasing parameter count
         if cb_means:
-            ax.plot(cb_x_vals, cb_means, color=CB_COLOR,
-                    lw=1.2, marker="o", ms=4, zorder=5, label="CB-RNN")
-        if rnn_means:
-            ax.plot(rnn_x_vals, rnn_means, color=RNN_COLOR,
-                    lw=1.2, marker="o", ms=4, zorder=5, label="RNN")
+            cb_sorted = sorted(zip(cb_x_vals, cb_means), key=lambda z: z[0])
+            cb_x_vals, cb_means = zip(*cb_sorted)
+            ax.plot(
+                cb_x_vals,
+                cb_means,
+                color=CB_COLOR,
+                lw=1.2,
+                marker="o",
+                ms=4,
+                zorder=5,
+                label="CB-RNN",
+            )
 
-        ax.set_xlabel("Trainable parameters",fontsize=label_fs)
+        if rnn_means:
+            rnn_sorted = sorted(zip(rnn_x_vals, rnn_means), key=lambda z: z[0])
+            rnn_x_vals, rnn_means = zip(*rnn_sorted)
+            ax.plot(
+                rnn_x_vals,
+                rnn_means,
+                color=RNN_COLOR,
+                lw=1.2,
+                marker="o",
+                ms=4,
+                zorder=5,
+                label="RNN",
+            )
+
+        ax.set_title(task_name, fontsize=label_fs)
+        ax.set_xlabel("Trainable parameters", fontsize=label_fs)
         ax.set_ylim(90, 575)
 
-        
-        ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=5,integer=True))
-        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x/1e3)}K"))
-        ax.tick_params(axis='both', labelsize=tick_fs)
-
-        # ax.ticklabel_format(style="sci", axis="x", scilimits=(0, 0))
+        ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=5, integer=True))
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x / 1e3)}K"))
+        ax.tick_params(axis="both", labelsize=tick_fs)
         ax.spines[["top", "right"]].set_visible(False)
 
-        axes[0].set_ylabel("Epochs to half-max N", fontsize=label_fs)   
+    axes[0].set_ylabel("Epochs to half-max N", fontsize=label_fs)
+
     for ax in axes[1:]:
         ax.set_ylabel("")
 
-    # fig.suptitle("CB-RNN learns faster as model scales", fontsize=12, y=1.02)
-    # fig.tight_layout(rect=[0, 0, 1, 0.96])
     return fig, axes
