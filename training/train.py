@@ -625,11 +625,13 @@ if __name__ == "__main__":
         AFFIXES += ["size", str(NUM_NEURONS)]
 
     if args.use_cb_bias:
-        AFFIXES += ["CB", f"gc{args.gc_dim}"]
+        if args.aux_rnn_cb:
+            AFFIXES += [f"auxH{args.aux_rnn_hidden_size}"]
+        else:
+            AFFIXES += ["CB", f"gc{args.gc_dim}"]
 
-        if args.pc_dim != 64:
-            AFFIXES += [f"pc{args.pc_dim}"]
-
+            if args.pc_dim != 64:
+                AFFIXES += [f"pc{args.pc_dim}"]
     else:
         AFFIXES += ["noCB"]
 
@@ -1007,11 +1009,19 @@ if __name__ == "__main__":
             affixes=mt_affixes,
         )
 
-        cb_param_ids = (
-            {id(p) for p in rnn.cb.parameters()}
-            if getattr(rnn, "cb", None) is not None
-            else set()
-        )
+        if getattr(args, "aux_rnn_cb", False) and getattr(rnn, "cb", None) is not None:
+            cb_param_ids = {id(p) for p in rnn.cb.parameters()}
+            non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
+            cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
+            optimizer = torch.optim.SGD(
+                [{"params": non_cb_params, "lr": args.rnn_lr},
+                {"params": cb_params, "lr": args.cb_lr}],
+                momentum=0.1, nesterov=True,
+            )
+        else:
+            optimizer = torch.optim.SGD(
+                list(rnn.parameters()), lr=args.rnn_lr, momentum=0.1, nesterov=True,
+            )
 
         def make_optimizer(params):
             params = list(params)
@@ -1084,11 +1094,19 @@ if __name__ == "__main__":
             affixes=cont_affixes,
         )
 
-        cb_param_ids = (
-            {id(p) for p in rnn.cb.parameters()}
-            if getattr(rnn, "cb", None) is not None
-            else set()
-        )
+        if getattr(args, "aux_rnn_cb", False) and getattr(rnn, "cb", None) is not None:
+            cb_param_ids = {id(p) for p in rnn.cb.parameters()}
+            non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
+            cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
+            optimizer = torch.optim.SGD(
+                [{"params": non_cb_params, "lr": args.rnn_lr},
+                {"params": cb_params, "lr": args.cb_lr}],
+                momentum=0.1, nesterov=True,
+            )
+        else:
+            optimizer = torch.optim.SGD(
+                list(rnn.parameters()), lr=args.rnn_lr, momentum=0.1, nesterov=True,
+            )
 
         def make_optimizer(params):
             params = list(params)
@@ -1163,12 +1181,19 @@ if __name__ == "__main__":
             affixes=switch_affixes,
         )
 
-        cb_param_ids = (
-            {id(p) for p in rnn.cb.parameters()}
-            if getattr(rnn, "cb", None) is not None
-            else set()
-        )
-
+        if getattr(args, "aux_rnn_cb", False) and getattr(rnn, "cb", None) is not None:
+            cb_param_ids = {id(p) for p in rnn.cb.parameters()}
+            non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
+            cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
+            optimizer = torch.optim.SGD(
+                [{"params": non_cb_params, "lr": args.rnn_lr},
+                {"params": cb_params, "lr": args.cb_lr}],
+                momentum=0.1, nesterov=True,
+            )
+        else:
+            optimizer = torch.optim.SGD(
+                list(rnn.parameters()), lr=args.rnn_lr, momentum=0.1, nesterov=True,
+            )
         def make_optimizer(params):
             params = list(params)
             cb_p = [p for p in params if id(p) in cb_param_ids]
@@ -1260,11 +1285,19 @@ if __name__ == "__main__":
                 flush=True,
             )
 
-        cb_param_ids = (
-            {id(p) for p in rnn.cb.parameters()}
-            if getattr(rnn, "cb", None) is not None
-            else set()
-        )
+        if getattr(args, "aux_rnn_cb", False) and getattr(rnn, "cb", None) is not None:
+            cb_param_ids = {id(p) for p in rnn.cb.parameters()}
+            non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
+            cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
+            optimizer = torch.optim.SGD(
+                [{"params": non_cb_params, "lr": args.rnn_lr},
+                {"params": cb_params, "lr": args.cb_lr}],
+                momentum=0.1, nesterov=True,
+            )
+        else:
+            optimizer = torch.optim.SGD(
+                list(rnn.parameters()), lr=args.rnn_lr, momentum=0.1, nesterov=True,
+            )
 
         non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
         cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
