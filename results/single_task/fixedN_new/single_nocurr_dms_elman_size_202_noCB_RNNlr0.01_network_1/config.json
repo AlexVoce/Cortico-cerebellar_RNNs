@@ -67,7 +67,7 @@
     "resume_strict": true,
     "resume_subdir": null,
     "rnn_lr": 0.01,
-    "seed": 1794581222,
+    "seed": 4055472828,
     "shared_optimiser": true,
     "skip_init_phase": false,
     "switch_n": 10,
@@ -82,11 +82,11 @@
     "use_reservoir_in_switch": false
   },
   "host": {
-    "cuda_available": false,
+    "cuda_available": true,
     "device": "None",
     "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
     "python": "3.10.12",
-    "pytorch": "2.13.0+cu130"
+    "pytorch": "2.13.0+cu126"
   },
   "model_config": {
     "model": {
@@ -155,5 +155,5 @@
     "curriculum_type": "single_nocurr",
     "task": "dms"
   },
-  "timestamp_utc": "2026-07-26T12:49:46.878087Z"
+  "timestamp_utc": "2026-07-26T13:10:11.142407Z"
 }
