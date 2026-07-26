@@ -123,6 +123,40 @@ class CB_bias(nn.Module):
 
         return cb_bias
 
+class RecurrentAuxModule(nn.Module):
+    def __init__(self, input_size, aux_hidden_size, main_hidden_size,
+                 tau=1.5, afunc=nn.LeakyReLU, bias=True):
+        super().__init__()
+        self.aux_hidden_size = aux_hidden_size
+        self.main_hidden_size = main_hidden_size
+        self.tau = float(tau)
+        self.afunc = afunc()
+        self.inp = nn.Linear(input_size, aux_hidden_size, bias=bias)
+        self.hh = nn.Linear(aux_hidden_size, aux_hidden_size, bias=bias)
+        self.out = nn.Linear(aux_hidden_size, main_hidden_size, bias=bias)
+        self._hparams = dict(
+            model_type="RecurrentAuxModule",
+            input_size=input_size, aux_hidden_size=aux_hidden_size,
+            main_hidden_size=main_hidden_size, tau=tau,
+        )
+
+    def init_hidden(self, batch_size, device):
+        return 0.1 * torch.rand(batch_size, self.aux_hidden_size, device=device)
+
+    def step(self, c_t, h2_prev, return_all=False):
+        alpha = 1.0 / self.tau
+        pre = self.inp(c_t) + self.hh(h2_prev)
+        h2_new = (1.0 - alpha) * h2_prev + alpha * self.afunc(pre)
+        bias = self.out(h2_new)
+        if return_all:
+            return h2_new, {
+                "gc_input": c_t,
+                "gc": h2_new,   # closest analogue to the expanded GC code
+                "pc": h2_new,   # no separate PC stage — aliased for key compatibility
+                "dcn": bias,
+                "cb_bias": bias,
+            }
+        return h2_new, bias
 
 class ElmanRNNMultiHead(nn.Module):
     """
@@ -151,6 +185,8 @@ class ElmanRNNMultiHead(nn.Module):
         cb_no_hidden: bool = False,
         cb_input_size: int = 0,
         cb_max_ratio: float = 1.0,
+        rnn_aux_ctrl: bool = False,
+        aux_hidden_size: int = 139, # matches CB with 256 gc layer
     ):
         super().__init__()
 
@@ -165,7 +201,8 @@ class ElmanRNNMultiHead(nn.Module):
         self.cb_no_hidden = cb_no_hidden
         self.cb_input_size = cb_input_size
         self.cb_max_ratio = cb_max_ratio
-
+        self.rnn_aux_ctrl = rnn_aux_ctrl
+        self.aux_hidden_size = aux_hidden_size
         # RNN core
         self.inp = nn.Linear(input_size, hidden_size, bias=bias)
         self.hh = nn.Linear(hidden_size, hidden_size, bias=bias)
@@ -175,20 +212,28 @@ class ElmanRNNMultiHead(nn.Module):
             [nn.Linear(hidden_size, num_classes) for _ in range(num_readout_heads)]
         )
 
-        # Cerebellar bias module
+        # Cerebellar Bias module
         if self.use_cb_bias:
-            if self.cb_no_hidden and cb_input_size <= 0:
-                raise ValueError(
-                    "cb_no_hidden=True requires cb_input_size > 0 so CB can receive task input."
+            if self.rnn_aux_ctrl:
+                aux_input_size = 0
+                if not cb_no_hidden:
+                    aux_input_size += hidden_size
+                if cb_input_size > 0:
+                    aux_input_size += cb_input_size
+                self.cb = RecurrentAuxModule(
+                    input_size=aux_input_size,
+                    aux_hidden_size=aux_hidden_size,
+                    main_hidden_size=hidden_size,
                 )
-
-            self.cb = CB_bias(
-                hidden_size=hidden_size,
-                gc_dim=cb_gc_dim,
-                pc_dim=cb_pc_dim,
-                input_size=cb_input_size,
-                use_hidden=not cb_no_hidden,
-            )
+            else:
+                if self.cb_no_hidden and cb_input_size <= 0:
+                    raise ValueError(
+                        "cb_no_hidden=True requires cb_input_size > 0 so CB can receive task input."
+                    )
+                self.cb = CB_bias(
+                    hidden_size=hidden_size, gc_dim=cb_gc_dim, pc_dim=cb_pc_dim,
+                    input_size=cb_input_size, use_hidden=not cb_no_hidden,
+                )
         else:
             self.cb = None
 
@@ -207,6 +252,7 @@ class ElmanRNNMultiHead(nn.Module):
             cb_input_size=cb_input_size if use_cb_bias else None,
             cb_max_ratio=cb_max_ratio if use_cb_bias else None,
             activation=afunc.__name__,
+            rnn_aux_ctrl=rnn_aux_ctrl,
         )
 
     def forward(
@@ -266,13 +312,23 @@ class ElmanRNNMultiHead(nn.Module):
         dcn_seq = [] if (collect_cb and return_dynamics) else None
         cb_bias_seq = [] if collect_cb else None
 
+        # h2 initialized ONCE, before the loop — not inside it
+        if self.use_cb_bias and self.rnn_aux_ctrl:
+            h2 = self.cb.init_hidden(B, device)
+        else:
+            h2 = None
+
         for t in range(T):
             h_prev = h
-
             pre = x_proj[t] + self.hh(h_prev)
 
             if self.use_cb_bias:
                 if task_id is not None and self.cb_input_size > 0:
+                    if self.rnn_aux_ctrl:
+                        raise NotImplementedError(
+                            "task_id path not wired up for rnn_aux_ctrl — "
+                            "unused in the paper anyway, guard rather than silently misuse."
+                        )
                     cb_input = torch.zeros(B, self.cb_input_size, device=device)
                     cb_input[:, task_id] = 1.0
 
@@ -283,38 +339,43 @@ class ElmanRNNMultiHead(nn.Module):
                         cb_dict = None
                         b_cb = self.cb(h_prev, x=cb_input, return_all=False)
 
-                    # rescaling not used in original code, only used with task id input which isnt in paper
                     b_cb = rescale_to_reference_norm(
-                        vec=b_cb,
-                        ref_vec=pre,
-                        max_ratio=self.cb_max_ratio,
+                        vec=b_cb, ref_vec=pre, max_ratio=self.cb_max_ratio,
                     )
-
                     if cb_dict is not None:
                         cb_dict["cb_bias"] = b_cb
 
                 elif self.cb_input_size > 0:
                     cb_input = data[t]
 
-                    if collect_cb:
-                        cb_dict = self.cb(h_prev, x=cb_input, return_all=True)
-                        b_cb = cb_dict["cb_bias"]
+                    if self.rnn_aux_ctrl:
+                        c_t = torch.cat([h_prev, cb_input], dim=-1)
+                        h2, aux_out = self.cb.step(c_t, h2, return_all=collect_cb)
+                        cb_dict = aux_out if collect_cb else None
+                        b_cb = aux_out["cb_bias"] if collect_cb else aux_out
                     else:
-                        cb_dict = None
-                        b_cb = self.cb(h_prev, x=cb_input, return_all=False)
-
+                        if collect_cb:
+                            cb_dict = self.cb(h_prev, x=cb_input, return_all=True)
+                            b_cb = cb_dict["cb_bias"]
+                        else:
+                            cb_dict = None
+                            b_cb = self.cb(h_prev, x=cb_input, return_all=False)
                     # No rescaling here, matching original code.
 
                 else:
                     cb_input = None
 
-                    if collect_cb:
-                        cb_dict = self.cb(h_prev, x=None, return_all=True)
-                        b_cb = cb_dict["cb_bias"]
+                    if self.rnn_aux_ctrl:
+                        h2, aux_out = self.cb.step(h_prev, h2, return_all=collect_cb)
+                        cb_dict = aux_out if collect_cb else None
+                        b_cb = aux_out["cb_bias"] if collect_cb else aux_out
                     else:
-                        cb_dict = None
-                        b_cb = self.cb(h_prev, x=None, return_all=False)
-
+                        if collect_cb:
+                            cb_dict = self.cb(h_prev, x=None, return_all=True)
+                            b_cb = cb_dict["cb_bias"]
+                        else:
+                            cb_dict = None
+                            b_cb = self.cb(h_prev, x=None, return_all=False)
                     # No rescaling here, matching original code.
 
                 post = pre + b_cb

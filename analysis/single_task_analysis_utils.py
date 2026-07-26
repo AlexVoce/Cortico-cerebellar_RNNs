@@ -1,4 +1,6 @@
+import json
 import re
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -361,3 +363,201 @@ def analyse_single_task_condition_groups(
         out[name] = res
 
     return out
+
+
+# ---------------------------------------------------------------------
+# fixed-N runs: repeats aren't grouped by N in the dirname, so N has to
+# be read out of each run's config.json instead
+# ---------------------------------------------------------------------
+
+def group_fixed_n_runs(base_dir, pattern=""):
+    """
+    Group fixed-N run directories under base_dir by the fixed N they were
+    trained at (read from config.json's cli_args['ns_init']), since the
+    directory name (e.g. ..._network_<k>) doesn't indicate N and repeats
+    of different N values are interleaved in the network numbering.
+
+    pattern : substring that must appear in the run dirname (like
+    _collect_runs' include_substr), not a glob pattern - e.g. "noCB" to
+    select only no-cerebellum runs. "" (default) matches every subdir.
+
+    Returns {N: [run_dir, ...]}, sorted by N, each list sorted by dirname.
+    """
+    base_dir = Path(base_dir)
+    run_dirs = sorted(
+        d for d in base_dir.iterdir() if d.is_dir() and pattern in d.name
+    )
+
+    groups = defaultdict(list)
+    for run_dir in run_dirs:
+        config_path = run_dir / "config.json"
+        if not config_path.exists():
+            continue
+        with open(config_path) as f:
+            cfg = json.load(f)
+        N = cfg["cli_args"]["ns_init"]
+        groups[N].append(run_dir)
+
+    return dict(sorted(groups.items()))
+
+
+def _pad_to_len(x, L):
+    x = np.asarray(x, dtype=float)
+    if x.size >= L:
+        return x[:L]
+    out = np.full(L, np.nan, dtype=float)
+    out[:x.size] = x
+    return out
+
+
+def average_fixed_n_loss_acc(base_dir, pattern="", stats_file="stats.npy"):
+    """
+    For each fixed-N group under base_dir (see group_fixed_n_runs), load
+    stats.npy for every repeat and compute the mean +/- sem loss and
+    accuracy over epochs across repeats. Runs missing a stats file (e.g.
+    still training) are skipped.
+
+    Returns {N: {"epochs", "loss_mean", "loss_sem", "acc_mean", "acc_sem", "n_runs"}}.
+    """
+    groups = group_fixed_n_runs(base_dir, pattern=pattern)
+
+    results = {}
+    for N, run_dirs in groups.items():
+        losses, accs = [], []
+        for run_dir in run_dirs:
+            stats_path = run_dir / stats_file
+            if not stats_path.exists():
+                continue
+            stats = _load_stats(stats_path)
+            losses.append(np.asarray(stats["loss"], dtype=float))
+            accs.append(np.asarray(stats["accuracy"], dtype=float))
+
+        if not losses:
+            continue
+
+        L = max(x.size for x in losses)
+        loss_arr = np.stack([_pad_to_len(x, L) for x in losses])
+        acc_arr = np.stack([_pad_to_len(x, L) for x in accs])
+        n_valid_loss = np.sum(np.isfinite(loss_arr), axis=0)
+        n_valid_acc = np.sum(np.isfinite(acc_arr), axis=0)
+
+        results[N] = {
+            "epochs": np.arange(L),
+            "loss_mean": np.nanmean(loss_arr, axis=0),
+            "loss_sem": np.nanstd(loss_arr, axis=0, ddof=1) / np.sqrt(n_valid_loss),
+            "acc_mean": np.nanmean(acc_arr, axis=0),
+            "acc_sem": np.nanstd(acc_arr, axis=0, ddof=1) / np.sqrt(n_valid_acc),
+            "n_runs": len(losses),
+        }
+
+    return results
+
+
+def plot_fixed_n_loss_and_accuracy(results, title=None, figsize=(6, 6), save_path=None):
+    """
+    results: output of average_fixed_n_loss_acc, {N: {"epochs","loss_mean",
+    "loss_sem","acc_mean","acc_sem"}}. Plots loss (top) and accuracy
+    (bottom) vs epoch, one line + shaded sem band per N.
+    """
+    fig, (ax_loss, ax_acc) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+
+    Ns = sorted(results.keys())
+    cmap = plt.get_cmap("viridis")
+    colors = {N: cmap(i / max(len(Ns) - 1, 1)) for i, N in enumerate(Ns)}
+
+    for N in Ns:
+        d = results[N]
+        color = colors[N]
+        label = f"N={N}"
+
+        ax_loss.plot(d["epochs"], d["loss_mean"], label=label, color=color, lw=1.5)
+        ax_loss.fill_between(
+            d["epochs"], d["loss_mean"] - d["loss_sem"], d["loss_mean"] + d["loss_sem"],
+            color=color, alpha=0.15,
+        )
+
+        ax_acc.plot(d["epochs"], d["acc_mean"], label=label, color=color, lw=1.5)
+        ax_acc.fill_between(
+            d["epochs"], d["acc_mean"] - d["acc_sem"], d["acc_mean"] + d["acc_sem"],
+            color=color, alpha=0.15,
+        )
+
+    ax_loss.set_ylabel("Loss")
+    ax_loss.set_yscale("log")
+    if title:
+        ax_loss.set_title(title)
+
+    ax_acc.set_ylabel("Accuracy (%)")
+    ax_acc.set_xlabel("Epoch")
+    ax_acc.legend(frameon=False, fontsize=8)
+
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches="tight", format="svg")
+    plt.show()
+
+    return fig, (ax_loss, ax_acc)
+
+
+def plot_fixed_n_comparison(
+    group_results,
+    colors=None,
+    alpha_range=(0.35, 1.0),
+    show_sem=True,
+    title=None,
+    figsize=(6, 6),
+    save_path=None,
+):
+    """
+    Overlay multiple average_fixed_n_loss_acc() results on one pair of
+    loss/accuracy axes - e.g. CB vs RNN. Each group gets its own base
+    color; within a group, alpha increases with N (lowest N = most
+    transparent, highest N = most opaque) so curves stay distinguishable
+    without a legend entry per N.
+
+    group_results : {group_name: results} where results is the output of
+        average_fixed_n_loss_acc().
+    colors : {group_name: color}, defaults to {"CB": "salmon", "RNN": "cornflowerblue"}.
+    """
+    colors = colors or {"CB": "salmon", "RNN": "cornflowerblue"}
+
+    fig, (ax_loss, ax_acc) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+
+    for group_name, results in group_results.items():
+        base_color = colors[group_name]
+        Ns = sorted(results.keys())
+        n_steps = max(len(Ns) - 1, 1)
+
+        for i, N in enumerate(Ns):
+            d = results[N]
+            alpha = alpha_range[0] + (alpha_range[1] - alpha_range[0]) * (i / n_steps)
+            label = f"{group_name}, N={N}"
+
+            ax_loss.plot(d["epochs"], d["loss_mean"], color=base_color, alpha=alpha, lw=1.5, label=label)
+            ax_acc.plot(d["epochs"], d["acc_mean"], color=base_color, alpha=alpha, lw=1.5, label=label)
+
+            if show_sem:
+                ax_loss.fill_between(
+                    d["epochs"], d["loss_mean"] - d["loss_sem"], d["loss_mean"] + d["loss_sem"],
+                    color=base_color, alpha=alpha * 0.2, lw=0,
+                )
+                ax_acc.fill_between(
+                    d["epochs"], d["acc_mean"] - d["acc_sem"], d["acc_mean"] + d["acc_sem"],
+                    color=base_color, alpha=alpha * 0.2, lw=0,
+                )
+
+    ax_loss.set_ylabel("Loss")
+    ax_loss.set_yscale("log")
+    if title:
+        ax_loss.set_title(title)
+
+    ax_acc.set_ylabel("Accuracy (%)")
+    ax_acc.set_xlabel("Epoch")
+    ax_acc.legend(frameon=False, fontsize=7, ncol=2)
+
+    plt.tight_layout()
+    if save_path is not None:
+        plt.savefig(save_path, bbox_inches="tight", format="svg")
+    plt.show()
+
+    return fig, (ax_loss, ax_acc)

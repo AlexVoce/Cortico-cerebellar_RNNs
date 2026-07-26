@@ -496,6 +496,11 @@ if __name__ == "__main__":
         help="Type of recurrent model to use.",
     )
 
+    parser.add_argument("--aux_rnn_cb", action="store_true", default=False,
+                        help="Use an auxiliary RNN for the cerebellum (CB) module.")
+    parser.add_argument("--aux_rnn_hidden_size", type=int, default=139,
+                        help="Hidden size for the auxiliary RNN in the CB module.")
+
     parser.set_defaults(
         num_neurons=500,
         curriculum_type="cumulative",
@@ -620,11 +625,13 @@ if __name__ == "__main__":
         AFFIXES += ["size", str(NUM_NEURONS)]
 
     if args.use_cb_bias:
-        AFFIXES += ["CB", f"gc{args.gc_dim}"]
+        if args.aux_rnn_cb:
+            AFFIXES += [f"auxH{args.aux_rnn_hidden_size}"]
+        else:
+            AFFIXES += ["CB", f"gc{args.gc_dim}"]
 
-        if args.pc_dim != 64:
-            AFFIXES += [f"pc{args.pc_dim}"]
-
+            if args.pc_dim != 64:
+                AFFIXES += [f"pc{args.pc_dim}"]
     else:
         AFFIXES += ["noCB"]
 
@@ -681,6 +688,8 @@ if __name__ == "__main__":
                 cb_input_size=cb_input_size,
                 cb_no_hidden=cb_no_hidden,
                 cb_max_ratio=args.cb_max_ratio,
+                rnn_aux_ctrl=args.aux_rnn_cb,
+                aux_hidden_size=args.aux_rnn_hidden_size,
             ).to(device)
 
         if args.model_type == "gru":
@@ -1006,6 +1015,7 @@ if __name__ == "__main__":
             else set()
         )
 
+
         def make_optimizer(params):
             params = list(params)
             cb_p = [p for p in params if id(p) in cb_param_ids]
@@ -1076,12 +1086,12 @@ if __name__ == "__main__":
             base_path=BASE_PATH,
             affixes=cont_affixes,
         )
-
         cb_param_ids = (
             {id(p) for p in rnn.cb.parameters()}
             if getattr(rnn, "cb", None) is not None
             else set()
         )
+
 
         def make_optimizer(params):
             params = list(params)
@@ -1253,12 +1263,35 @@ if __name__ == "__main__":
                 flush=True,
             )
 
-        optimizer = torch.optim.SGD(
-            list(rnn.parameters()),
-            lr=args.rnn_lr,
-            momentum=0.1,
-            nesterov=True,
-        )
+        # cb_param_ids = (
+        #     {id(p) for p in rnn.cb.parameters()}
+        #     if getattr(rnn, "cb", None) is not None
+        #     else set()
+        # )
+
+        # non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
+        # cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
+
+        # param_groups = []
+        # if non_cb_params:
+        #     param_groups.append({"params": non_cb_params, "lr": args.rnn_lr})
+        # if cb_params:
+        #     param_groups.append({"params": cb_params, "lr": args.cb_lr})
+
+        # optimizer = torch.optim.SGD(param_groups, momentum=0.1, nesterov=True)
+        if getattr(args, "aux_rnn_cb", False) and getattr(rnn, "cb", None) is not None:
+            cb_param_ids = {id(p) for p in rnn.cb.parameters()}
+            non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
+            cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
+            optimizer = torch.optim.SGD(
+                [{"params": non_cb_params, "lr": args.rnn_lr},
+                {"params": cb_params, "lr": args.cb_lr}],
+                momentum=0.1, nesterov=True,
+            )
+        else:
+            optimizer = torch.optim.SGD(
+                list(rnn.parameters()), lr=args.rnn_lr, momentum=0.1, nesterov=True,
+            )
 
         train(
             rnn,

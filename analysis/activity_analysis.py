@@ -4,6 +4,7 @@ import torch
 import json
 from analysis.rebuild_model_utils import find_available_Ns,load_state_dict, load_run_config, build_model_from_config_and_state
 import os
+import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, MaxNLocator
 
@@ -38,6 +39,7 @@ def run_pca_on_tensor(X: torch.Tensor):
 
     d90 = int(np.searchsorted(cum_evr, 0.90) + 1)
     d95 = int(np.searchsorted(cum_evr, 0.95) + 1)
+    d95_frac = d95 / X.shape[1]
     participation_ratio = (eigvals.sum() ** 2) / np.sum(eigvals ** 2)
 
     return {
@@ -46,6 +48,7 @@ def run_pca_on_tensor(X: torch.Tensor):
         "cumulative_explained_variance": cum_evr,
         "d90": d90,
         "d95": d95,
+        "d95_frac": d95_frac,
         "participation_ratio": participation_ratio,
     }
 def collect_activity_for_n(
@@ -133,7 +136,6 @@ def collect_and_pca_one_N(
         **pca_res,
     }
 
-
 def pca_across_run(
     run_path,
     batch_fn,
@@ -198,12 +200,12 @@ def summarize_run_pca_for_multiple_keys(
                 "N": r["N"],
                 "d90": r["d90"],
                 "d95": r["d95"],
+                "d95_frac": r["d95_frac"],
                 "participation_ratio": r["participation_ratio"],
             })
 
     return pd.DataFrame(rows)
-import os
-import pandas as pd
+
 
 def summarize_multi_runs_pca_for_multi_keys(
     run_paths,
@@ -353,6 +355,8 @@ def plot_two_tasks_full_vs_reservoir_pca_mean_2x2(
         metric_label = r"$d_{90}$"
     elif metric == "d95":
         metric_label = r"$d_{95}$"
+    elif metric == "d95_frac":
+        metric_label = r"$d_{95}^{frac}$"
     else:
         metric_label = metric
     
@@ -530,6 +534,8 @@ def plot_two_tasks_small_vs_large_pca_mean_2x2(
         metric_label = r"$d_{90}$"
     elif metric == "d95":
         metric_label = r"$d_{95}$"
+    elif metric == "d95_frac":
+        metric_label = r"$d_{95}^{frac}$"
     else:
         metric_label = metric
 
