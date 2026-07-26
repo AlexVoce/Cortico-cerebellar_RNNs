@@ -3,7 +3,11 @@
     "allow": [
       "Bash(git push *)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('analysis/activity_analysis.py'\\).read\\(\\)\\)\")",
-      "Bash(python3 -c \"import ast; ast.parse\\(open\\('analysis/single_task_analysis_utils.py'\\).read\\(\\)\\)\")"
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('analysis/single_task_analysis_utils.py'\\).read\\(\\)\\)\")",
+      "Bash(nvidia-smi)",
+      "Bash(ubuntu-drivers devices *)",
+      "Bash(lspci)",
+      "Bash(apt-cache policy *)"
     ]
   }
 }

@@ -8,6 +8,9 @@ from analysis.ablation import find_available_Ns
 from analysis.activity_analysis import collect_activity_for_n, flatten_activity_from_output, summarize_multi_runs_pca_for_multi_keys
 from analysis.rebuild_model_utils import load_run_config
 
+def default_device():
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
 def population_sparseness(r, eps=1e-8):
     """Treves-Rolls sparseness for one sample's activations across units.
     r: (n_units,) non-negative activation vector. Returns 0 (dense) to 1 (sparse)."""
@@ -32,7 +35,8 @@ def sparsity_over_checkpoint(activity):
 
 from analysis.rebuild_model_utils import load_state_dict, build_model_from_config_and_state
 # collect activity for Ns and compute sparsity metrics
-def collect_sparsity_for_n(run_path, N, batch_fn, key="gc", device="cpu"):
+def collect_sparsity_for_n(run_path, N, batch_fn, key="gc", device=None):
+    device = device or default_device()
 
     cfg = load_run_config(run_path)
     sd = load_state_dict(run_path,N)
@@ -66,9 +70,10 @@ def summarize_run_sparsity_for_multiple_keys(
     run_path,
     batch_fn,
     keys=("hidden", "gc", "cb_bias"),
-    device="cpu",
+    device=None,
     run_id=None,
 ):
+    device = device or default_device()
     if run_id is None:
         run_id = os.path.basename(str(run_path).rstrip("/"))
 
@@ -93,8 +98,9 @@ def summarize_multi_runs_sparsity_for_multi_keys(
     run_paths,
     batch_fn,
     keys=("hidden", "gc", "cb_bias"),
-    device="cpu",
+    device=None,
 ):
+    device = device or default_device()
     dfs = []
     for i, run_path in enumerate(run_paths):
         run_id = os.path.basename(str(run_path).rstrip("/"))
