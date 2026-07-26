@@ -8,35 +8,32 @@
     "--curriculum_type",
     "single_nocurr",
     "--ns_init",
-    "13",
+    "10",
     "--num_neurons",
     "64",
     "--readout_mode",
     "single",
     "--afunc",
     "leakyrelu",
-    "--aux_rnn_cb",
     "--cb_lr",
     "0.01",
     "--cb_sees_input",
     "--gc_dim",
     "256",
-    "--pc_dim",
-    "16",
     "--num_epochs",
     "1000",
     "--rnn_lr",
     "0.01",
     "--base_path",
-    "./results/single_task/dms_multistyle_repeats"
+    "./results/single_task/fixedN"
   ],
   "cli_args": {
     "add_heads": 1,
     "affixes": "",
     "afunc": "leakyrelu",
-    "aux_rnn_cb": true,
+    "aux_rnn_cb": false,
     "aux_rnn_hidden_size": 139,
-    "base_path": "./results/single_task/dms_multistyle_repeats",
+    "base_path": "./results/single_task/fixedN",
     "batch_size": 64,
     "cb_lr": 0.01,
     "cb_max_ratio": 1.0,
@@ -63,10 +60,10 @@
     "mt_target_n": 150,
     "multitask": false,
     "network_number": 1,
-    "ns_init": 13,
+    "ns_init": 10,
     "num_epochs": 1000,
     "num_neurons": 64,
-    "pc_dim": 16,
+    "pc_dim": 64,
     "readout_mode": "single",
     "reservoir_interval_n": 10,
     "resume_ckpt": null,
@@ -74,7 +71,7 @@
     "resume_strict": true,
     "resume_subdir": null,
     "rnn_lr": 0.01,
-    "seed": 3391973923,
+    "seed": 245214909,
     "shared_optimiser": true,
     "skip_init_phase": false,
     "switch_n": 10,
@@ -97,11 +94,11 @@
   },
   "model_config": {
     "cerebellum": {
-      "aux_hidden_size": 139,
-      "input_size": 65,
-      "main_hidden_size": 64,
-      "model_type": "RecurrentAuxModule",
-      "tau": 1.5
+      "gc_dim": 256,
+      "hidden_size": 64,
+      "input_size": 1,
+      "pc_dim": 64,
+      "use_hidden": true
     },
     "model": {
       "activation": "LeakyReLU",
@@ -110,20 +107,20 @@
       "cb_input_size": 1,
       "cb_max_ratio": 1.0,
       "cb_no_hidden": false,
-      "cb_pc_dim": 16,
+      "cb_pc_dim": 64,
       "hidden_size": 64,
       "input_size": 1,
       "model_type": "ElmanRNNMultiHead",
       "num_classes": 2,
       "num_readout_heads": 1,
-      "rnn_aux_ctrl": true,
+      "rnn_aux_ctrl": false,
       "tau": 1.5,
       "use_cb_bias": true
     },
     "params": {
       "cb": {
-        "total": 37594,
-        "trainable": 37594
+        "total": 37504,
+        "trainable": 37504
       },
       "core": {
         "total": 4288,
@@ -139,14 +136,14 @@
         "total": 4288,
         "trainable": 4288
       },
-      "total": 42012,
-      "trainable": 42012
+      "total": 41922,
+      "trainable": 41922
     }
   },
   "params": {
     "cb": {
-      "total": 37594,
-      "trainable": 37594
+      "total": 37504,
+      "trainable": 37504
     },
     "core": {
       "total": 4288,
@@ -162,8 +159,8 @@
       "total": 4288,
       "trainable": 4288
     },
-    "total": 42012,
-    "trainable": 42012
+    "total": 41922,
+    "trainable": 41922
   },
   "run": {
     "Ns_init": null,
@@ -171,7 +168,8 @@
       "elman",
       "size",
       "64",
-      "auxH139",
+      "CB",
+      "gc256",
       "RNNlr0.01",
       "CBlr0.01",
       "CBinput"
@@ -179,5 +177,5 @@
     "curriculum_type": "single_nocurr",
     "task": "dms"
   },
-  "timestamp_utc": "2026-07-26T10:40:37.522905Z"
+  "timestamp_utc": "2026-07-26T11:10:24.553826Z"
 }
