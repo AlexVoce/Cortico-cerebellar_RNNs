@@ -136,7 +136,6 @@ def collect_and_pca_one_N(
         **pca_res,
     }
 
-
 def pca_across_run(
     run_path,
     batch_fn,

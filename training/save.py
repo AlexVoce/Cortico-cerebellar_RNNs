@@ -278,3 +278,22 @@ def make_unique_dir(path: str) -> str:
         path = f"{base}_v{k}"
     os.makedirs(path, exist_ok=True)
     return path
+
+def match_aux_hidden_size(target_params, input_size, main_hidden_size,
+                           search_range=range(2, 400), tau=1.5, bias=True):
+    best_H2, best_diff, best_count = None, None, None
+    from model.models_cb import RecurrentAuxModule
+    for H2 in search_range:
+        aux = RecurrentAuxModule(
+            input_size=input_size,
+            aux_hidden_size=H2,
+            main_hidden_size=main_hidden_size,
+            tau=tau,
+            bias=bias,
+        )
+        n = count_params(aux)["trainable"]
+        diff = abs(n - target_params)
+        if best_diff is None or diff < best_diff:
+            best_H2, best_diff, best_count = H2, diff, n
+    return best_H2, best_count, best_diff
+

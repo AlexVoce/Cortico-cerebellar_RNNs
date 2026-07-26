@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('analysis/activity_analysis.py'\\).read\\(\\)\\)\")"
     ]
   }
 }

@@ -496,6 +496,11 @@ if __name__ == "__main__":
         help="Type of recurrent model to use.",
     )
 
+    parser.add_argument("--aux_rnn_cb", action="store_true", default=False,
+                        help="Use an auxiliary RNN for the cerebellum (CB) module.")
+    parser.add_argument("--aux_rnn_hidden_size", type=int, default=139,
+                        help="Hidden size for the auxiliary RNN in the CB module.")
+
     parser.set_defaults(
         num_neurons=500,
         curriculum_type="cumulative",
@@ -681,6 +686,8 @@ if __name__ == "__main__":
                 cb_input_size=cb_input_size,
                 cb_no_hidden=cb_no_hidden,
                 cb_max_ratio=args.cb_max_ratio,
+                rnn_aux_ctrl=args.aux_rnn_cb,
+                aux_hidden_size=args.aux_rnn_hidden_size,
             ).to(device)
 
         if args.model_type == "gru":
@@ -1253,12 +1260,22 @@ if __name__ == "__main__":
                 flush=True,
             )
 
-        optimizer = torch.optim.SGD(
-            list(rnn.parameters()),
-            lr=args.rnn_lr,
-            momentum=0.1,
-            nesterov=True,
+        cb_param_ids = (
+            {id(p) for p in rnn.cb.parameters()}
+            if getattr(rnn, "cb", None) is not None
+            else set()
         )
+
+        non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
+        cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
+
+        param_groups = []
+        if non_cb_params:
+            param_groups.append({"params": non_cb_params, "lr": args.rnn_lr})
+        if cb_params:
+            param_groups.append({"params": cb_params, "lr": args.cb_lr})
+
+        optimizer = torch.optim.SGD(param_groups, momentum=0.1, nesterov=True)
 
         train(
             rnn,
