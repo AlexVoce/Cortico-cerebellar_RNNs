@@ -2,7 +2,7 @@
 
 Code and results for training and analysing recurrent neural networks with a cerebellar-inspired bias module (CB-RNNs).
 
-The model is a recurrent network with an optional feedforward module. The module reads the recurrent hidden state and the current input, expands them into a large granule-cell-like layer, and returns a hidden-sized bias that is added to the recurrent update. The networks are trained with a curriculum on temporal memory tasks, mainly delayed match-to-sample (DMS) and N-bit parity. They are compared with recurrent-only baselines that have a matched parameter count.
+The model is a recurrent network with an optional cerebellar-inspired feedforward module. The module reads the recurrent hidden state and the current input, expands them into a large granule-cell-like layer, and returns a hidden-sized bias that is added to the recurrent update. The networks are trained with a curriculum on temporal memory tasks and their curriculum trajectories compared with recurrent-only baselines. 
 
 The trained runs used in the paper are included under `results/`, so every figure and table can be reproduced without retraining.
 
@@ -19,21 +19,6 @@ The figures use LaTeX text rendering (`text.usetex`), so a LaTeX installation is
 ## Reproducing the figures
 
 Run `paper_figures.ipynb` from the repository root. It is organised by figure (Figures 2-6, then the appendix figures and tables) and reads everything from `results/`.
-
-Figure 6 can also be drawn outside the notebook:
-
-```bash
-python -m analysis.mechanism_plots
-```
-
-This writes the panels to `Figures/ICLR/`. The data behind Figure 6 is precomputed in `results/mechanistic_analysis/`. To regenerate it (slow):
-
-```bash
-python -m analysis.run_dms_memory_propagation
-python -m analysis.run_dms_memory_dynamics
-python -m analysis.dms_memory_dynamics_stats
-python -m analysis.run_parity_cb_encoding
-```
 
 ## Training
 
