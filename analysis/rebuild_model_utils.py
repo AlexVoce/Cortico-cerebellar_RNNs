@@ -7,8 +7,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from model.models_cb import ElmanRNNMultiHead
-from model.GRU_test import GRUMultiHeadWithCB
+from model.cb_rnn import ElmanRNNMultiHead
+from model.cb_gru import GRUMultiHeadWithCB
 
 def _safe_int(value, default):
     if value is None:
@@ -16,10 +16,7 @@ def _safe_int(value, default):
     return int(value)
 
 def find_available_Ns(run_path):
-    """
-    Find all checkpoint Ns in a run directory for files named like:
-        rnn_N12_N12
-    """
+    """Checkpoint Ns in a run directory (files named rnn_N{N}_N{N})."""
     run_path = Path(run_path)
     Ns = []
 
@@ -36,11 +33,7 @@ def find_available_Ns(run_path):
 
 
 def load_state_dict(run_path, N):
-    """
-    Load checkpoint file rnn_N{N}_N{N}.
-
-    Handles either a raw state_dict or a dict containing 'state_dict'.
-    """
+    """Load checkpoint rnn_N{N}_N{N} (raw state_dict or {'state_dict': ...})."""
     path = os.path.join(run_path, f"rnn_N{N}_N{N}")
     state_dict = torch.load(path, map_location="cpu")
 
@@ -51,11 +44,7 @@ def load_state_dict(run_path, N):
 
 
 def get_weight_array(state_dict, key):
-    """
-    Extract one parameter from a loaded state_dict as a flat numpy array.
-
-    Returns None if key is missing.
-    """
+    """One parameter from a state_dict as a flat numpy array, or None if missing."""
     if key not in state_dict:
         return None
 
@@ -68,9 +57,7 @@ def get_weight_array(state_dict, key):
 
 
 def activation_from_string(name: str):
-    """
-    Convert saved activation-function name to torch module class.
-    """
+    """Activation module class from its saved name."""
     name = str(name).lower()
 
     if name == "relu":
@@ -89,9 +76,7 @@ def activation_from_string(name: str):
 
 
 def load_run_config(run_dir):
-    """
-    Load config.json from a saved run directory.
-    """
+    """Load config.json from a run directory."""
     config_path = os.path.join(run_dir, "config.json")
 
     if not os.path.exists(config_path):
@@ -109,9 +94,7 @@ def _head_keys(state_dict):
 
 
 def _infer_model_type_from_state_dict(state_dict):
-    """
-    Infer whether the state_dict belongs to the cleaned Elman or GRU model.
-    """
+    """Infer whether a state_dict is from the Elman or GRU model."""
     keys = set(state_dict.keys())
 
     if "inp.weight" in keys and "hh.weight" in keys:
@@ -124,9 +107,7 @@ def _infer_model_type_from_state_dict(state_dict):
 
 
 def infer_model_dims_from_state_dict(state_dict):
-    """
-    Infer model dimensions from a cleaned Elman/GRU state_dict.
-    """
+    """Infer model dimensions from an Elman/GRU state_dict."""
     dims = {}
     model_type = _infer_model_type_from_state_dict(state_dict)
     dims["model_type"] = model_type
@@ -176,9 +157,7 @@ def infer_model_dims_from_state_dict(state_dict):
 
 
 def _get_nested(dct, keys, default=None):
-    """
-    Safely get nested config values.
-    """
+    """Get a nested config value."""
     current = dct
 
     for key in keys:
@@ -190,9 +169,7 @@ def _get_nested(dct, keys, default=None):
 
 
 def _model_config_from_run_config(cfg):
-    """
-    Return model config dict from supported config layouts.
-    """
+    """Model config from supported config layouts."""
     model_cfg = _get_nested(cfg, ["model_config", "model"], default=None)
 
     if model_cfg is not None:
@@ -210,9 +187,7 @@ def _cli_args_from_run_config(cfg):
 
 
 def clean_state_dict_for_current_model(state_dict):
-    """
-    Remove keys from older checkpoints that are no longer present in the cleaned model.
-    """
+    """Drop keys from older checkpoints that the current model no longer has."""
     cleaned = dict(state_dict)
     cleaned.pop("tau_param", None)
     return cleaned
@@ -358,9 +333,7 @@ def build_model_from_config_and_state(cfg, state_dict, device="cpu", load_weight
 
 
 def load_model_from_run(run_dir, N, device="cpu", strict=False):
-    """
-    Convenience helper: load config + checkpoint, rebuild model, and load weights.
-    """
+    """Load config and checkpoint, rebuild the model and load weights."""
     cfg = load_run_config(run_dir)
     state_dict = load_state_dict(run_dir, N)
 

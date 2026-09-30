@@ -7,21 +7,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-# ---------------------------------------------------------------------
-# Loading / repeat expansion
-# ---------------------------------------------------------------------
+# Loading
 
 def _load_stats(path):
     return np.load(path, allow_pickle=True).item()
 
 
 def _expand_single_task_paths(path_or_dir, expected_name="stats.npy"):
-    """
-    Accept either:
-      - a single stats.npy file
-      - a run folder ending in _network_<k>
-      - a directory containing repeat subfolders
-    """
+    """Expand a stats.npy file, a run folder, or a directory of repeats into stats paths."""
     p = Path(path_or_dir)
 
     if p.is_file():
@@ -87,10 +80,7 @@ def _auc_curve(y):
 
 
 def _first_stable_threshold_epoch(acc, start_idx, threshold=85.0, patience=3):
-    """
-    First epoch e >= start_idx such that acc[e:e+patience] are all >= threshold.
-    Returns epoch index (0-based), or None if never achieved.
-    """
+    """First epoch >= start_idx where acc stays >= threshold for `patience` epochs, or None."""
     acc = np.asarray(acc, dtype=float)
     last_start = len(acc) - patience + 1
     if last_start <= start_idx:
@@ -124,13 +114,7 @@ def find_shared_clip_len_for_target_N(
     target_N,
     mode="earliest_mean_reach",
 ):
-    """
-    Determine a single shared clip_len for all groups in one task comparison.
-
-    mode:
-      - "earliest_mean_reach": earliest epoch where any group mean reaches target_N
-      - "latest_mean_reach": latest epoch where all groups that can reach target_N have done so
-    """
+    """Shared clip_len for all groups in one comparison ('earliest_mean_reach' or 'latest_mean_reach')."""
     base_dir = Path(base_dir)
     all_subdirs = [p for p in base_dir.iterdir() if p.is_dir()]
 
@@ -174,9 +158,7 @@ def find_shared_clip_len_for_target_N(
         raise ValueError(f"Unknown mode: {mode}")
     
 def _load_single_stats_clipped(path, clip_len=None, clip_N=None):
-    """
-    Load one single-task stats.npy and return a clipped stats dict.
-    """
+    """Load one single-task stats.npy, clipped."""
     stats = _load_stats(path)
 
     n_series = _get_single_n_series(stats)
@@ -190,10 +172,10 @@ def _load_single_stats_clipped(path, clip_len=None, clip_N=None):
         clip_len=clip_len,
     )
 
-    clipped = dict(stats)  # shallow copy
+    clipped = dict(stats)
     clipped["n_task"] = n_series
 
-    # preserve whichever accuracy key exists
+    # keep whichever accuracy key exists
     for key in ["accuracy", "acc", "score"]:
         if key in clipped:
             clipped[key] = acc_series
@@ -203,18 +185,10 @@ def _load_single_stats_clipped(path, clip_len=None, clip_N=None):
         clipped["loss"] = loss_series
 
     return clipped
-# ---------------------------------------------------------------------
-# Metrics for one single-task run
-# ---------------------------------------------------------------------
+# Metrics for one run
 
 def compute_solve_times_for_single_run(stats, threshold=85.0, patience=3):
-    """
-    Returns dict: N -> epochs-to-solve at that N
-    where solve_time = first stable threshold epoch - entry epoch
-
-    This assumes the curriculum only advances after hitting criterion, which matches
-    your single-task training setup.
-    """
+    """N -> epochs to solve (first stable threshold epoch minus entry epoch)."""
     n_series = _get_single_n_series(stats)
     acc_series = _get_single_acc_series(stats)
 
@@ -237,9 +211,7 @@ def compute_solve_times_for_single_run(stats, threshold=85.0, patience=3):
 
 
 def compute_single_run_summary(stats, threshold=98.0, patience=1):
-    """
-    Summary metrics for one already-clipped single-task run.
-    """
+    """Summary metrics for one clipped run."""
     n_series = _get_single_n_series(stats)
     acc_series = _get_single_acc_series(stats)
     solve_times = compute_solve_times_for_single_run(stats, threshold=threshold, patience=patience)
@@ -256,9 +228,7 @@ def compute_single_run_summary(stats, threshold=98.0, patience=1):
         "epochs": len(n_series),
     }
 
-# ---------------------------------------------------------------------
-# Aggregate one group of repeated runs
-# ---------------------------------------------------------------------
+# Aggregate one group of repeats
 
 def analyse_single_task_group(
     path_or_dir,
@@ -267,9 +237,7 @@ def analyse_single_task_group(
     clip_len=None,
     clip_N=None,
 ):
-    """
-    analyse one repeated condition (e.g. CB or RNN baseline), with optional clipping.
-    """
+    """Analyse one group of repeats, with optional clipping."""
     paths = _expand_single_task_paths(path_or_dir, expected_name="stats.npy")
     run_summaries = []
 
@@ -277,12 +245,10 @@ def analyse_single_task_group(
         stats = _load_single_stats_clipped(p, clip_len=clip_len, clip_N=clip_N)
         run_summaries.append(compute_single_run_summary(stats, threshold=threshold, patience=patience))
 
-    # scalar metrics
     auc_vals = np.array([r["auc_N"] for r in run_summaries], dtype=float)
     final_N_vals = np.array([r["final_N"] for r in run_summaries], dtype=float)
     max_solved_vals = np.array([r["max_solved_N"] for r in run_summaries], dtype=float)
 
-    # per-N solve times
     all_ns = sorted(set().union(*[set(r["solve_times"].keys()) for r in run_summaries]))
     solve_time_by_N = {}
     for N in all_ns:
@@ -324,9 +290,7 @@ def analyse_single_task_group(
         },
         "solve_time_by_N": solve_time_by_N,
     }
-# ---------------------------------------------------------------------
-# analyse multiple groups for one task
-# ---------------------------------------------------------------------
+# Multiple groups for one task
 def analyse_single_task_condition_groups(
     base_dir,
     groups,
@@ -335,9 +299,7 @@ def analyse_single_task_condition_groups(
     clip_len=None,
     clip_N=None,
 ):
-    """
-    analyse multiple groups for one task, with optional clipping.
-    """
+    """Analyse multiple groups for one task, with optional clipping."""
     out = {}
 
     base_dir = Path(base_dir)
@@ -365,24 +327,10 @@ def analyse_single_task_condition_groups(
     return out
 
 
-# ---------------------------------------------------------------------
-# fixed-N runs: repeats aren't grouped by N in the dirname, so N has to
-# be read out of each run's config.json instead
-# ---------------------------------------------------------------------
+# Fixed-N runs (N is read from config.json)
 
 def group_fixed_n_runs(base_dir, pattern=""):
-    """
-    Group fixed-N run directories under base_dir by the fixed N they were
-    trained at (read from config.json's cli_args['ns_init']), since the
-    directory name (e.g. ..._network_<k>) doesn't indicate N and repeats
-    of different N values are interleaved in the network numbering.
-
-    pattern : substring that must appear in the run dirname (like
-    _collect_runs' include_substr), not a glob pattern - e.g. "noCB" to
-    select only no-cerebellum runs. "" (default) matches every subdir.
-
-    Returns {N: [run_dir, ...]}, sorted by N, each list sorted by dirname.
-    """
+    """Group fixed-N run directories by their trained N. Returns {N: [run_dir, ...]}."""
     base_dir = Path(base_dir)
     run_dirs = sorted(
         d for d in base_dir.iterdir() if d.is_dir() and pattern in d.name
@@ -411,14 +359,7 @@ def _pad_to_len(x, L):
 
 
 def average_fixed_n_loss_acc(base_dir, pattern="", stats_file="stats.npy"):
-    """
-    For each fixed-N group under base_dir (see group_fixed_n_runs), load
-    stats.npy for every repeat and compute the mean +/- sem loss and
-    accuracy over epochs across repeats. Runs missing a stats file (e.g.
-    still training) are skipped.
-
-    Returns {N: {"epochs", "loss_mean", "loss_sem", "acc_mean", "acc_sem", "n_runs"}}.
-    """
+    """Mean +/- SEM loss and accuracy over epochs for each fixed-N group."""
     groups = group_fixed_n_runs(base_dir, pattern=pattern)
 
     results = {}
@@ -454,11 +395,7 @@ def average_fixed_n_loss_acc(base_dir, pattern="", stats_file="stats.npy"):
 
 
 def plot_fixed_n_loss_and_accuracy(results, title=None, figsize=(6, 6), save_path=None):
-    """
-    results: output of average_fixed_n_loss_acc, {N: {"epochs","loss_mean",
-    "loss_sem","acc_mean","acc_sem"}}. Plots loss (top) and accuracy
-    (bottom) vs epoch, one line + shaded sem band per N.
-    """
+    """Loss (top) and accuracy (bottom) vs epoch, one line per N."""
     fig, (ax_loss, ax_acc) = plt.subplots(2, 1, figsize=figsize, sharex=True)
 
     Ns = sorted(results.keys())
@@ -508,17 +445,7 @@ def plot_fixed_n_comparison(
     figsize=(6, 6),
     save_path=None,
 ):
-    """
-    Overlay multiple average_fixed_n_loss_acc() results on one pair of
-    loss/accuracy axes - e.g. CB vs RNN. Each group gets its own base
-    color; within a group, alpha increases with N (lowest N = most
-    transparent, highest N = most opaque) so curves stay distinguishable
-    without a legend entry per N.
-
-    group_results : {group_name: results} where results is the output of
-        average_fixed_n_loss_acc().
-    colors : {group_name: color}, defaults to {"CB": "salmon", "RNN": "cornflowerblue"}.
-    """
+    """Overlay several average_fixed_n_loss_acc results; alpha increases with N within a group."""
     colors = colors or {"CB": "salmon", "RNN": "cornflowerblue"}
 
     fig, (ax_loss, ax_acc) = plt.subplots(2, 1, figsize=figsize, sharex=True)

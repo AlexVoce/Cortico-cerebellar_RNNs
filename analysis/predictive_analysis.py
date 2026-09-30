@@ -1,4 +1,3 @@
-# analysis/predictive_analysis.py
 import os
 import numpy as np
 import pandas as pd
@@ -9,8 +8,8 @@ from matplotlib.ticker import MaxNLocator
 from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.metrics import r2_score
 
-from analysis.ablation import find_available_Ns
-from analysis.activity_analysis import collect_activity_for_n
+from analysis.cb_ablation import find_available_Ns
+from analysis.pca_dimensionality import collect_activity_for_n
 from analysis.rebuild_model_utils import load_run_config, load_state_dict, build_model_from_config_and_state
 
 DEFAULT_ALPHAS = np.logspace(-1, 4, 11)
@@ -24,9 +23,7 @@ def _to_numpy(x):
     return x.detach().cpu().numpy() if hasattr(x, "detach") else np.asarray(x)
 
 
-# =============================================================================
-# Dynamics collection (one model, one N)
-# =============================================================================
+# Dynamics collection
 
 def collect_dynamics_for_n(
     run_path,
@@ -37,10 +34,7 @@ def collect_dynamics_for_n(
     head_idx=0,
     device=None,
 ):
-    """
-    Load the checkpoint for one run/N and collect time-resolved dynamics
-    (hidden, gc, pc, cb_bias, ...) across n_batches held-out batches.
-    """
+    """Collect time-resolved dynamics for one run and N."""
     device = device or default_device()
 
     cfg = load_run_config(run_path)
@@ -60,20 +54,10 @@ def collect_dynamics_for_n(
     )
 
 
-# =============================================================================
-# Lagged design matrices + forward-prediction scoring
-# =============================================================================
+# Lagged design matrices and forward-prediction scoring
 
 def _flatten_lagged_batches(dyn_list, x_key, z_key, lag):
-    """
-    dyn_list: list of per-batch dynamics dicts, each holding [T, B, D] tensors
-    (as returned in output["dynamics"] from collect_activity_for_n).
-
-    Pools (t, b) pairs across all batches into flat arrays for one lag:
-        X[i] = state at time t          (x_key)
-        Z[i] = CB signal at time t      (z_key), or None if z_key is None
-        Y[i] = state at time t + lag    (x_key)
-    """
+    """Pool (t, b) pairs for one lag. Returns X (state at t), Z (CB at t, or None), Y (state at t + lag)."""
     X_chunks, Z_chunks, Y_chunks = [], [], []
 
     for dyn in dyn_list:
@@ -103,10 +87,7 @@ def _flatten_lagged_batches(dyn_list, x_key, z_key, lag):
 
 
 def _split_batches_train_test(n_batches, test_frac=0.3, random_state=0):
-    """
-    Split batch indices (not individual trials) into train/test so that
-    held-out scoring never sees trials used for fitting.
-    """
+    """Split batch indices into train/test."""
     rng = np.random.RandomState(random_state)
     idx = rng.permutation(n_batches)
     n_test = max(1, int(round(n_batches * test_frac)))
@@ -126,20 +107,10 @@ def forward_prediction_scores_for_lag(
     n_permutations=0,
     random_state=0,
 ):
-    """
-    Fit ridge regressions predicting future state x_key[t+lag] from:
-      A) current state x_key[t] alone
-      B) current state x_key[t] concatenated with CB signal z_key[t]
-    on held-out batches, and compare cross-validated R^2.
+    """Held-out ridge R^2 predicting x[t+lag] from x[t] alone vs x[t] plus z[t].
 
-    A positive delta_r2 (= r2_state_plus_cb - r2_state_only) means the CB
-    signal carries information about future recurrent activity beyond what
-    the current state already encodes -- evidence of a forward-model-like
-    role rather than a purely reactive bias.
-
-    If n_permutations > 0, also fits a null distribution of delta_r2 by
-    shuffling the correspondence between z and (x, y), and reports a
-    one-sided p-value for the observed delta_r2.
+        Optionally adds a permutation null for delta_r2.
+    
     """
     train = _flatten_lagged_batches(dyn_train, x_key, z_key, lag)
     test = _flatten_lagged_batches(dyn_test, x_key, z_key, lag)
@@ -170,16 +141,14 @@ def forward_prediction_scores_for_lag(
         "n_test": int(X_te.shape[0]),
         "alpha_A": float(model_A.alpha_),
         "alpha_B": float(model_B.alpha_),
-        # True if the selected alpha sits at the low (ill-conditioned) edge of
-        # the search grid -- a sign the "best" fit may itself be unstable.
+        # True if the selected alpha is at the low edge of the grid
         "alpha_at_grid_floor": bool(model_A.alpha_ <= alpha_min or model_B.alpha_ <= alpha_min),
     }
 
     if n_permutations > 0:
         rng = np.random.RandomState(random_state)
         null_deltas = np.empty(n_permutations)
-        # Reuse model_B's selected alpha for permutations (plain Ridge) --
-        # refitting RidgeCV's internal CV per permutation is unnecessary cost.
+        # reuse model B's alpha for the permutation fits
         perm_alpha = float(model_B.alpha_)
 
         for i in range(n_permutations):
@@ -219,11 +188,7 @@ def forward_prediction_for_n(
     device=None,
     random_state=0,
 ):
-    """
-    For one run/N, evaluate whether z_key (e.g. "cb_bias" or "gc") predicts
-    future x_key activity (e.g. "hidden") beyond x_key alone, across a range
-    of lags. Returns a list of per-lag result dicts (tagged with N).
-    """
+    """Forward-prediction results over lags for one run and N."""
     device = device or default_device()
     output = collect_dynamics_for_n(
         run_path=run_path,
@@ -263,9 +228,7 @@ def forward_prediction_for_n(
     return rows
 
 
-# =============================================================================
-# Across Ns / across runs
-# =============================================================================
+# Across Ns / runs
 
 def summarize_run_forward_prediction(
     run_path,
@@ -363,9 +326,7 @@ def summarize_multi_runs_forward_prediction(
     return pd.concat(dfs, ignore_index=True)
 
 
-# =============================================================================
 # Plotting
-# =============================================================================
 
 def plot_delta_r2_vs_lag(
     df,
@@ -375,10 +336,7 @@ def plot_delta_r2_vs_lag(
     figsize=(4, 3),
     save_path=None,
 ):
-    """
-    Plot mean delta_r2 vs lag, optionally split by group_col (e.g. "N" or
-    "run_id"). Shaded band is SEM across whatever rows share (group_col, lag).
-    """
+    """Mean delta_r2 vs lag, optionally split by group_col, with SEM bands."""
     fig, ax = plt.subplots(figsize=figsize)
 
     if group_col is None:
@@ -418,3 +376,11 @@ def plot_delta_r2_vs_lag(
     plt.show()
 
     return fig, ax
+
+
+def _select_Ns(available_Ns, max_Ns=None):
+    """Optionally subsample curriculum levels to at most max_Ns."""
+    if max_Ns is None or len(available_Ns) <= max_Ns:
+        return available_Ns
+    idx = np.linspace(0, len(available_Ns) - 1, max_Ns).round().astype(int)
+    return [available_Ns[i] for i in sorted(set(idx))]

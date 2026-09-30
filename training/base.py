@@ -1,12 +1,11 @@
-# training/base.py
 
 import numpy as np
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from training.train_utils import step_optimizer
-from tasks.task_registry import compute_loss
+from training.utils import step_optimizer
+from tasks.registry import compute_loss
 
 
 def head_idx_factory(Ns_init, num_heads):
@@ -24,9 +23,7 @@ def head_idx_factory(Ns_init, num_heads):
 
 
 def compute_active_set(active_Ns, next_N, readout_head_dyn, n_heads, n_forget):
-    """
-    Compute which N-levels are actively trained at the current curriculum stage.
-    """
+    """N-levels actively trained at the current curriculum stage."""
     if readout_head_dyn == "single":
         return [next_N]
 
@@ -58,9 +55,7 @@ def evaluate(
     head_idx,
     spec,
 ):
-    """
-    Evaluate model performance over test_steps batches.
-    """
+    """Evaluate the model over test_steps batches."""
     model.eval()
     metrics = []
 
@@ -112,11 +107,7 @@ def _zero_optimizer(optimizer, shared_optimiser=True):
 
 
 def _split_model_params(model):
-    """
-    Split model parameters into base RNN/readout parameters and CB parameters.
-
-    Uses model.cb directly rather than relying on parameter-name strings.
-    """
+    """Split parameters into base RNN/readout and CB (via model.cb)."""
     cb_params = (
         list(model.cb.parameters())
         if getattr(model, "cb", None) is not None
@@ -161,9 +152,7 @@ def train_steps(
     shared_optimiser=True,
     spec=None,
 ):
-    """
-    Run training_steps minibatches for one reservoir curriculum stage.
-    """
+    """Run training_steps minibatches for one reservoir curriculum stage."""
     if spec is None:
         raise ValueError("train_steps requires spec=...")
 

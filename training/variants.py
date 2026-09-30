@@ -1,13 +1,9 @@
-# training/variants.py
 
 from training.base import compute_active_set, train_steps, evaluate
 
 
 def _is_reservoir_refresh_n(next_n: int, anchor_n: int, interval: int) -> bool:
-    """
-    Return True when the reservoir/interleaved-reservoir schedule should
-    briefly re-enable recurrent plasticity at this curriculum level.
-    """
+    """True if recurrent plasticity is re-enabled at this N (every reservoir_interval levels)."""
     if interval <= 0:
         raise ValueError("reservoir_interval must be > 0.")
 
@@ -49,27 +45,11 @@ def variant_cb_only_reservoir(
     on_log=None,
     **kwargs,
 ):
-    """
-    Reservoir/interleaved-reservoir curriculum stage.
+    """One reservoir curriculum stage: CB and heads train, with recurrent plasticity
+        re-enabled at refresh levels (e.g. start N=2, interval 10: N=12, 22, ... train both).
 
-    Behaviour
-    ---------
-    - The base phase is handled outside this function.
-    - At most curriculum levels, only the CB module and readout heads are trained.
-    - At reservoir refresh levels, recurrent plasticity is briefly re-enabled.
-
-    Example
-    -------
-    If Ns_init[0] = 2 and reservoir_interval = 10:
-
-        N=3..11  -> CB_ONLY
-        N=12     -> BOTH
-        N=13..21 -> CB_ONLY
-        N=22     -> BOTH
-
-    Returns
-    -------
-    success, new_active_Ns, new_current_N, logs, updated_global_epoch
+        Returns success, new_active_Ns, new_current_N, logs, updated_global_epoch.
+    
     """
     logs = []
 

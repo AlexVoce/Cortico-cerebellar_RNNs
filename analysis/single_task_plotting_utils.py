@@ -1,5 +1,5 @@
-# analysis/single_task_plotting_utils.py
 import os
+import re
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,13 +18,7 @@ def _pad_to_len(x, L):
 
 
 def _pad_to_len_last_value(x, L):
-    """
-    Pad 1D array x to length L by repeating the final value.
-    Used for runs that stopped early because they hit the N ceiling —
-    they have 'solved' the task so their N should be held flat rather
-    than dropping to NaN (which would drag the group mean down).
-    If x is already >= L, it is clipped to L.
-    """
+    """Pad x to length L with its final value (for runs that stopped at the N ceiling)."""
     x = np.asarray(x, dtype=float)
     if x.size >= L:
         return x[:L]
@@ -35,31 +29,39 @@ def _pad_to_len_last_value(x, L):
 
 
 def _collect_runs(base_dir, include_substr, clip_len=None, clip_N=None,
-                  stats_file="stats.npy", pad_early_stops=False):
-    """
-    Load all runs matching include_substr.
+                  stats_file="stats.npy", pad_early_stops=False, exclude_substr=None,
+                  max_runs=None):
+    """Load all runs matching include_substr.
 
-    pad_early_stops : bool
-        If True, runs whose N series ends below clip_len (i.e. they stopped
-        early by hitting the N ceiling) are padded with their final N value
-        rather than NaN.  This prevents fast/early-stopping runs from
-        dragging the group mean downward in plots and AUC calculations.
-        Runs that are simply shorter because they haven't finished are still
-        NaN-padded so they don't contribute false signal beyond their length.
-
-    clip_N : int or None
-        If set, N values are clipped to this ceiling (y-axis cap only).
-        The x-axis / time dimension is never truncated based on clip_N.
+        max_runs: keep only the first max_runs runs.
+        exclude_substr: skip runs whose name contains any of these.
+        pad_early_stops: pad runs that stopped at the N ceiling with their final N.
+        clip_N: cap N values (y-axis only).
+    
     """
+    if exclude_substr is None:
+        exclude_substrs = []
+    elif isinstance(exclude_substr, str):
+        exclude_substrs = [exclude_substr]
+    else:
+        exclude_substrs = list(exclude_substr)
+
     run_dirs = [
         d for d in os.listdir(base_dir)
         if os.path.isdir(os.path.join(base_dir, d)) and (include_substr in d)
+        and not any(ex in d for ex in exclude_substrs)
     ]
 
     raw = []
     kept, skipped = [], []
 
-    for run in sorted(run_dirs):
+    def _natural_key(name):
+        # so network_10 sorts after network_2
+        return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", name)]
+
+    for run in sorted(run_dirs, key=_natural_key):
+        if max_runs is not None and len(raw) >= max_runs:
+            break
         path = os.path.join(base_dir, run, stats_file)
         try:
             stats = np.load(path, allow_pickle=True).item()
@@ -88,18 +90,14 @@ def _collect_runs(base_dir, include_substr, clip_len=None, clip_N=None,
     if len(raw) == 0:
         raise RuntimeError(f"No valid runs found for pattern '{include_substr}' in {base_dir}")
 
-    # Decide final length
     max_len = max(r["N"].size for r in raw)
     L = max_len if clip_len is None else min(int(clip_len), max_len)
 
-    Ns, losses, accs, aucs = [], [], [], []
+    Ns, losses, accs, aucs, aucs_first_half = [], [], [], [], []
     for r in raw:
         n_raw = r["N"]
 
-        # Decide padding strategy for this run's N series.
-        # A run "finished early" if it's shorter than L AND its final N
-        # equals clip_N (it hit the ceiling).  Only apply last-value padding
-        # in that case; genuinely short runs still get NaN padding.
+        # pad with the final N only if the run stopped early at the ceiling
         hit_ceiling = (
             pad_early_stops
             and clip_N is not None
@@ -116,7 +114,6 @@ def _collect_runs(base_dir, include_substr, clip_len=None, clip_N=None,
             Lp = _pad_to_len(r["loss"], L)
             Ap = _pad_to_len(r["acc"], L)
 
-        # Clip N values to ceiling if specified
         if clip_N is not None:
             Np = np.clip(Np, None, clip_N)
             valid = Np <= clip_N
@@ -137,6 +134,16 @@ def _collect_runs(base_dir, include_substr, clip_len=None, clip_N=None,
         else:
             aucs.append(np.nan)
 
+        # AUC over the first half of training
+        half = L // 2
+        valid_half = valid[:half]
+        if valid_half.sum() >= 2:
+            x = np.arange(half)[valid_half]
+            y = Np[:half][valid_half]
+            aucs_first_half.append(auc(x, y))
+        else:
+            aucs_first_half.append(np.nan)
+
     return {
         "runs": kept,
         "skipped": skipped,
@@ -145,6 +152,7 @@ def _collect_runs(base_dir, include_substr, clip_len=None, clip_N=None,
         "loss": np.stack(losses, axis=0),
         "acc": np.stack(accs, axis=0),
         "auc": np.asarray(aucs, dtype=float),
+        "auc_first_half": np.asarray(aucs_first_half, dtype=float),
     }
 
 def _mean_std_nan(x):
@@ -161,7 +169,7 @@ def average_and_plot_runs(
     figsize=(8, 5),
     plot_metric2="loss",
     log_y2=True,
-    show_metric2=True,   # NEW
+    show_metric2=True,
     show=True,
     fig_height=3,
     save_path=None,
@@ -169,7 +177,6 @@ def average_and_plot_runs(
     linewidth= 397.5
     inches_per_pt = 1 / 72.27
     fig_width = linewidth * inches_per_pt
-    # ---- load + aggregate ----
     agg = {}
     max_L = 0
 
@@ -201,6 +208,7 @@ def average_and_plot_runs(
             "acc_mean": acc_mean,
             "acc_std": acc_std,
             "auc": data["auc"],
+            "auc_first_half": data["auc_first_half"],
             "runs": data["runs"],
             "skipped": data["skipped"],
             "color": cfg.get("color", None),
@@ -210,7 +218,6 @@ def average_and_plot_runs(
     epochs = np.arange(max_L)
 
 
-    # ---- plotting ----
     if figsize is None:
         figsize = (fig_width, fig_height)
     label_fs = 9 
@@ -224,7 +231,7 @@ def average_and_plot_runs(
         axs = np.array([ax1])
         ax2 = None
 
-    # ---- top subplot: curriculum progression ----
+    # curriculum progression
     for name, d in agg.items():
         L = d["L"]
         ax1.plot(
@@ -252,7 +259,7 @@ def average_and_plot_runs(
     if not show_metric2:
         ax1.set_xlabel(x_label, fontsize=label_fs, fontweight="bold")
 
-    # ---- optional lower subplot ----
+    # optional lower subplot
     if show_metric2:
         key_mean = f"{plot_metric2}_mean"
         key_std = f"{plot_metric2}_std"
@@ -297,25 +304,26 @@ def average_and_plot_runs(
     return agg, fig, axs
 
 
-## for plotting multiple tasks in one figure
+# Multi-task figures
 def _aggregate_one_task(
     base_dir,
     groups,
     clip_len=None,
     clip_N=None,
     pad_early_stops=False,
+    stats_file="stats.npy",
+    max_runs=None,
 ):
-    """
-    Aggregate runs for one task directory.
-    Returns the same agg dict structure the plotting code expects.
-    """
+    """Aggregate runs for one task directory."""
     agg = {}
     max_L = 0
 
     for name, cfg in groups.items():
         pat = cfg["pattern"]
         data = _collect_runs(base_dir, pat, clip_len=clip_len, clip_N=clip_N,
-                             pad_early_stops=pad_early_stops)
+                             pad_early_stops=pad_early_stops, stats_file=stats_file,
+                             exclude_substr=cfg.get("exclude"),
+                             max_runs=cfg.get("max_runs", max_runs))
 
         L = data["clip_len_used"]
         max_L = max(max_L, L)
@@ -332,6 +340,7 @@ def _aggregate_one_task(
             "loss_mean": loss_mean, "loss_std": loss_std,
             "acc_mean": acc_mean, "acc_std": acc_std,
             "auc": data["auc"],
+            "auc_first_half": data["auc_first_half"],
             "runs": data["runs"],
             "skipped": data["skipped"],
             "color": cfg.get("color", None),
@@ -360,14 +369,15 @@ def average_and_plot_runs_multitask(
     shade_auc=False,
     shade_sem=True,
     save_path=None,
+    stats_file="stats.npy",
+    big_font=False,
+    max_runs=None,
 ):
-    """
-    pad_early_stop_tasks : list/set of task names
-        For these tasks, runs that hit the N ceiling before the epoch budget
-        is exhausted are padded with their final N value (rather than NaN),
-        so fast runs don't drag the group mean downward.
-        E.g. pad_early_stop_tasks={"Oddball"} to fix oddball whilst leaving
-        DMS and Parity behaviour unchanged.
+    """Learning curves for several tasks, one column per task.
+
+        max_runs: cap on repeats per group (a group can override it).
+        pad_early_stop_tasks: tasks whose early-stopping runs are padded with their final N.
+    
     """
     scale_factor = 1
     linewidth= 397.5
@@ -383,7 +393,6 @@ def average_and_plot_runs_multitask(
 
     n_rows = 2 if plot_lower_metric else 1
     figsize = (fig_width * scale_factor,fig_height) if figsize is None else figsize
-    # figsize = figsize or (4.5 * n_tasks, 8 if plot_lower_metric else 4.5)
 
     fig, axs = plt.subplots(
         n_rows,
@@ -418,6 +427,8 @@ def average_and_plot_runs_multitask(
             clip_len=clip_lens.get(task, None),
             clip_N=clip_Ns.get(task, None),
             pad_early_stops=task in pad_early_stop_tasks,
+            stats_file=stats_file,
+            max_runs=max_runs,
         )
         task_aggs[task] = agg
         meta[task] = {"max_L": max_L}
@@ -456,7 +467,7 @@ def average_and_plot_runs_multitask(
 
             ax1.plot(
                 x, y,
-                lw=1.5,
+                lw=1.5 if big_font else 1.2,
                 label=f"{name}",
                 color=d["color"],
                 zorder=3
@@ -468,12 +479,15 @@ def average_and_plot_runs_multitask(
                     color=d["color"],
                     zorder=2
                 )
-
-        label_fs = 9 * scale_factor
-        tick_fs = 8 * scale_factor
-        title_fs = 9 * scale_factor
-        ax1.set_ylabel("Task Difficulty (N)" if col == 0 else "", fontsize=label_fs, fontweight="bold")
-        # do 5 y ticks if possible        
+        if big_font:
+            label_fs = 14
+            tick_fs = 12
+            title_fs = 14
+        else:
+            label_fs = 9 * scale_factor
+            tick_fs = 8 * scale_factor
+            title_fs = 9 * scale_factor
+        ax1.set_ylabel("N" if col == 0 else "", fontsize=label_fs, fontweight="bold")
         ax1.yaxis.set_major_locator(MaxNLocator(nbins=4))
         ax1.set_title(task_titles.get(task, task), fontsize=title_fs, fontweight="bold")
         ax1.set_xlim(0, max_L - 1)
@@ -507,7 +521,7 @@ def average_and_plot_runs_multitask(
                 y = m[:L_plot]
                 sd = s[:L_plot]
 
-                ax2.plot(x, y, lw=1.5, label=name, color=d["color"])
+                ax2.plot(x, y, lw=1.5 if big_font else 1.2, label=name, color=d["color"])
                 ax2.fill_between(x, y - sd, y + sd, alpha=0.12, color=d["color"])
 
             ax2.set_ylabel(ylab if col == 0 else "", fontsize=label_fs, fontweight="bold")
@@ -525,9 +539,9 @@ def average_and_plot_runs_multitask(
             ax1.legend(loc="lower right", frameon=False, fontsize=tick_fs-2)
 
     fig.suptitle(figure_title, fontsize=15, fontweight="bold", y=0.98)
-    # plt.tight_layout(rect=[0, 0, 1, 0.96])
     if save_path:
-        fig.savefig(save_path, bbox_inches="tight",format="svg")
+        fig.savefig(save_path, bbox_inches="tight",dpi=300)
+
 
     if show:
         plt.show()
@@ -535,9 +549,7 @@ def average_and_plot_runs_multitask(
     return task_aggs, fig, axs
 
 
-# ---------------------------------------------------------------------
-# Plot mean epochs to solve each N for one task
-# ---------------------------------------------------------------------
+# Mean epochs to solve each N (one task)
 
 def plot_mean_epochs_to_solve_each_N(
     analysis_dict,
@@ -571,9 +583,7 @@ def plot_mean_epochs_to_solve_each_N(
     return fig, ax
 
 
-# ---------------------------------------------------------------------
-# Summary bar plot for one task
-# ---------------------------------------------------------------------
+# Summary bar plot (one task)
 
 def plot_single_task_summary_bars(
     analysis_dict,
@@ -615,9 +625,7 @@ def plot_single_task_summary_bars(
     return fig, axes
 
 
-# ---------------------------------------------------------------------
-# Multi-task figure: mean epochs to solve each N
-# ---------------------------------------------------------------------
+# Multi-task: mean epochs to solve each N
 
 def plot_mean_epochs_to_solve_each_N_multitask(
     analyses_by_task,
@@ -663,9 +671,7 @@ def plot_mean_epochs_to_solve_each_N_multitask(
     return fig, axes
 
 
-# ---------------------------------------------------------------------
-# Multi-task figure: summary metrics bars
-# ---------------------------------------------------------------------
+# Multi-task: summary metric bars
 
 def plot_single_task_summary_bars_multitask(
     analyses_by_task,
@@ -722,17 +728,7 @@ def plot_single_task_summary_bars_multitask(
 
 
 def compute_auc_differences_all_pairs(task_aggs, task_dirs, matched_pairs):
-    """
-    Computes AUC differences for all task x matched-model-pair comparisons.
-
-    Assumes:
-        task_aggs[task][model_name]["auc"]
-
-    Returns
-    -------
-    df_diff : pd.DataFrame
-        One row per task x pair.
-    """
+    """AUC differences for every task x matched model pair. Returns one row per task x pair."""
     rows = []
 
     for task in task_dirs.keys():
@@ -791,12 +787,7 @@ def plot_auc_differences_all_pairs(
     fig_height=3.5,
     save_path=None,
 ):
-    """
-    Bar plot of CB-RNN minus matched RNN AUC differences.
-
-    Bars show mean difference.
-    Error bars show SD across repeats.
-    """
+    """Bar plot of CB-RNN minus matched RNN AUC (mean, SD across repeats)."""
     if pair_order is None:
         pair_order = list(df_auc_diffs["pair"].unique())
 
@@ -869,3 +860,89 @@ def plot_auc_differences_all_pairs(
     plt.show()
 
     return fig, ax
+
+# Expansion-layer size scaling
+
+def plot_expansion_size_scaling(
+    task_dirs,
+    gc_sizes=(64, 128, 256, 512),
+    pattern="CB_gc{gc}_RNNlr0.01_CBlr0.01_CBinput_simult",
+    baseline_pattern=None,
+    clip_lens=None,
+    task_titles=None,
+    cmap="Reds",
+    figsize=None,
+    plot_prog=True,
+    save_path=None,
+    dpi=900,
+):
+    """N-progression curves and per-seed AUC vs CB expansion size, one column per task."""
+    tasks = list(task_dirs.keys())
+    clip_lens = clip_lens or {}
+    task_titles = task_titles or {t: t for t in tasks}
+    colors = plt.get_cmap(cmap)(np.linspace(0.35, 0.95, len(gc_sizes)))
+
+    if figsize is None:
+        figsize = (9, 5.5) if plot_prog else (9, 2.8)
+    nrows = 2 if plot_prog else 1
+    fig, axs = plt.subplots(nrows, len(tasks), figsize=figsize, squeeze=False)
+    sem = lambda x: np.nanstd(x, axis=0, ddof=1) / np.sqrt(np.sum(np.isfinite(x), axis=0))
+
+    for col, task in enumerate(tasks):
+        ax_top = axs[0, col] if plot_prog else None
+        ax_bot = axs[-1, col]
+        clip_len = clip_lens.get(task)
+
+        per_gc = {}
+        for gc, color in zip(gc_sizes, colors):
+            d = _collect_runs(task_dirs[task], pattern.format(gc=gc), clip_len=clip_len)
+            per_gc[gc] = d
+            if plot_prog:
+                x = np.arange(d["clip_len_used"])
+                m, s = np.nanmean(d["N"], axis=0), sem(d["N"])
+                ax_top.plot(x, m, color=color, lw=1.6, label=f"{gc}")
+                ax_top.fill_between(x, m - s, m + s, color=color, alpha=0.2, lw=0)
+
+        (ax_top if plot_prog else ax_bot).set_title(task_titles[task])
+        if plot_prog:
+            ax_top.set_xlabel("Epoch")
+            if col == 0:
+                ax_top.set_ylabel("Task difficulty reached (N)")
+                ax_top.legend(title="Expansion size", frameon=False, fontsize=8, title_fontsize=8)
+
+        if baseline_pattern is not None:
+            b = _collect_runs(task_dirs[task], baseline_pattern, clip_len=clip_len)["auc"]
+            ax_bot.axhline(np.nanmean(b), color="gray", ls="--", lw=1, zorder=1,
+                           label="RNN only")
+            ax_bot.axhspan(np.nanmean(b) - np.nanstd(b, ddof=1) / np.sqrt(len(b)),
+                           np.nanmean(b) + np.nanstd(b, ddof=1) / np.sqrt(len(b)),
+                           color="gray", alpha=0.15, lw=0)
+
+        xs = np.arange(len(gc_sizes))
+        means = np.array([np.nanmean(per_gc[g]["auc"]) for g in gc_sizes])
+        sems = np.array([np.nanstd(per_gc[g]["auc"], ddof=1) / np.sqrt(len(per_gc[g]["auc"]))
+                         for g in gc_sizes])
+        rng = np.random.default_rng(0)
+        for i, (g, color) in enumerate(zip(gc_sizes, colors)):
+            pts = per_gc[g]["auc"]
+            ax_bot.scatter(i + rng.uniform(-0.12, 0.12, len(pts)), pts,
+                           s=14, color=color, alpha=0.6, zorder=2, lw=0)
+        ax_bot.plot(xs, means, color="k", lw=1, zorder=3)
+        ax_bot.errorbar(xs, means, yerr=sems, fmt="o", color="k", ms=5, capsize=3, zorder=4)
+
+        ax_bot.set_xticks(xs)
+        ax_bot.set_xticklabels([str(g) for g in gc_sizes])
+        ax_bot.set_xlabel("Expansion layer size")
+        if col == 0:
+            ax_bot.set_ylabel("AUC of N progression")
+            if baseline_pattern is not None:
+                ax_bot.legend(frameon=False, fontsize=8, loc="upper left")
+
+        for ax in (ax_top, ax_bot):
+            if ax is not None:
+                ax.spines[["top", "right"]].set_visible(False)
+
+    plt.tight_layout()
+    if save_path:
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
+    return fig, axs

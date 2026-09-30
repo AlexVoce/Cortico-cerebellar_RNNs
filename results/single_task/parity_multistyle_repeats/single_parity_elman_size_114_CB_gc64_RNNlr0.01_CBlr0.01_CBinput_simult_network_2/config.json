@@ -1,0 +1,187 @@
+{
+  "argv": [
+    "training/train.py",
+    "--task",
+    "parity",
+    "--model_type",
+    "elman",
+    "--curriculum_type",
+    "single",
+    "--num_neurons",
+    "114",
+    "--readout_mode",
+    "single",
+    "--afunc",
+    "leakyrelu",
+    "--cb_lr",
+    "0.01",
+    "--gc_dim",
+    "64",
+    "--cb_sees_input",
+    "--num_epochs",
+    "1000",
+    "--rnn_lr",
+    "0.01",
+    "--affixes",
+    "simult",
+    "--base_path",
+    "./results/single_task/parity_multistyle_repeats"
+  ],
+  "cli_args": {
+    "add_heads": 1,
+    "advance_every_epochs": null,
+    "affixes": "simult",
+    "afunc": "leakyrelu",
+    "aux_rnn_cb": false,
+    "aux_rnn_hidden_size": 139,
+    "base_path": "./results/single_task/parity_multistyle_repeats",
+    "batch_size": 64,
+    "cb_compress_dim": 0,
+    "cb_lr": 0.01,
+    "cb_max_ratio": 1.0,
+    "cb_no_hidden": false,
+    "cb_sees_input": true,
+    "cb_store": false,
+    "continual": false,
+    "continual_epochs_per_phase": 100,
+    "continual_patience": 1,
+    "continual_plan": "dms,parity,dms",
+    "continual_reservoir_mode": "off",
+    "continual_savings_threshold": 98.0,
+    "continual_target_n": 150,
+    "ct_advance_threshold": 98.0,
+    "ct_switch": false,
+    "curriculum_type": "single",
+    "forget_heads": 1,
+    "gc_dim": 64,
+    "init_heads": 1,
+    "model_type": "elman",
+    "mt_advance_threshold": 98.0,
+    "mt_patience": 1,
+    "mt_reservoir_mode": "off",
+    "mt_target_n": 150,
+    "multitask": false,
+    "network_number": 1,
+    "ns_init": null,
+    "num_epochs": 1000,
+    "num_neurons": 114,
+    "pc_dim": 64,
+    "readout_mode": "single",
+    "reservoir_interval_n": 10,
+    "resume_ckpt": null,
+    "resume_start_n": null,
+    "resume_strict": true,
+    "resume_subdir": null,
+    "rnn_lr": 0.01,
+    "seed": 4102843480,
+    "shared_optimiser": true,
+    "skip_init_phase": false,
+    "switch_n": 10,
+    "target_end_n": null,
+    "task": "parity",
+    "task_switch": false,
+    "task_switch_plan": "dms,violation,dms",
+    "task_switch_targetN": 13,
+    "tau": null,
+    "test_steps": 50,
+    "training_steps": 100,
+    "use_cb_bias": true,
+    "use_reservoir_in_switch": false
+  },
+  "host": {
+    "cuda_available": true,
+    "device": "None",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35",
+    "python": "3.10.12",
+    "pytorch": "2.3.1+cu121"
+  },
+  "model_config": {
+    "cerebellum": {
+      "compress_dim": 0,
+      "gc_dim": 64,
+      "hidden_size": 114,
+      "input_size": 1,
+      "pc_dim": 64,
+      "use_hidden": true
+    },
+    "model": {
+      "activation": "LeakyReLU",
+      "bias": true,
+      "cb_compress_dim": 0,
+      "cb_gc_dim": 64,
+      "cb_input_size": 1,
+      "cb_max_ratio": 1.0,
+      "cb_no_hidden": false,
+      "cb_pc_dim": 64,
+      "hidden_size": 114,
+      "input_size": 1,
+      "model_type": "ElmanRNNMultiHead",
+      "num_classes": 2,
+      "num_readout_heads": 1,
+      "rnn_aux_ctrl": false,
+      "tau": 1.5,
+      "use_cb_bias": true
+    },
+    "params": {
+      "cb": {
+        "total": 18994,
+        "trainable": 18994
+      },
+      "core": {
+        "total": 13338,
+        "trainable": 13338
+      },
+      "model_type": "ElmanRNNMultiHead",
+      "non_cb_trainable": 13568,
+      "readout": {
+        "total": 230,
+        "trainable": 230
+      },
+      "rnn": {
+        "total": 13338,
+        "trainable": 13338
+      },
+      "total": 32562,
+      "trainable": 32562
+    }
+  },
+  "params": {
+    "cb": {
+      "total": 18994,
+      "trainable": 18994
+    },
+    "core": {
+      "total": 13338,
+      "trainable": 13338
+    },
+    "model_type": "ElmanRNNMultiHead",
+    "non_cb_trainable": 13568,
+    "readout": {
+      "total": 230,
+      "trainable": 230
+    },
+    "rnn": {
+      "total": 13338,
+      "trainable": 13338
+    },
+    "total": 32562,
+    "trainable": 32562
+  },
+  "run": {
+    "Ns_init": null,
+    "affixes": [
+      "elman",
+      "size",
+      "114",
+      "CB",
+      "gc64",
+      "RNNlr0.01",
+      "CBlr0.01",
+      "CBinput",
+      "simult"
+    ],
+    "curriculum_type": "single",
+    "task": "parity"
+  },
+  "timestamp_utc": "2026-09-23T12:09:16.310172Z"
+}

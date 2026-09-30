@@ -1,0 +1,447 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+def rescale_to_reference_norm(vec, ref_vec, max_ratio=1.0, eps=1e-8):
+    """Rescale vec so that ||vec|| <= max_ratio * ||ref_vec|| per batch item."""
+    vec_norm = vec.norm(dim=-1, keepdim=True).clamp_min(eps)
+    ref_norm = ref_vec.norm(dim=-1, keepdim=True).clamp_min(eps)
+
+    max_allowed = max_ratio * ref_norm
+    scale = torch.minimum(torch.ones_like(vec_norm), max_allowed / vec_norm)
+
+    return vec * scale
+
+
+class CB_bias(nn.Module):
+    """Cerebellar feedforward bias module (GC -> PC -> DCN) from h_t and optionally x_t."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        gc_dim: int = 128,
+        pc_dim: int = 64,
+        input_size: int = 0,
+        use_hidden: bool = True,
+        compress_dim: int = 0,
+    ):
+        super().__init__()
+
+        self.hidden_size = hidden_size
+        self.gc_dim = gc_dim
+        self.pc_dim = pc_dim
+        self.input_size = input_size
+        self.use_hidden = use_hidden
+        self.use_input = input_size > 0
+        self.compress_dim = compress_dim
+        self.use_compression = compress_dim > 0
+
+        if not self.use_hidden and not self.use_input:
+            raise ValueError(
+                "CB_bias must receive at least one of hidden state or task input."
+            )
+
+        gc_input_size = 0
+        if self.use_hidden:
+            gc_input_size += hidden_size
+        if self.use_input:
+            gc_input_size += input_size
+
+        # optional linear bottleneck between (h, x) and the GC expansion
+        if self.use_compression:
+            self.compress = nn.Linear(gc_input_size, compress_dim, bias=True)
+            nn.init.zeros_(self.compress.bias)
+            nn.init.normal_(self.compress.weight, std=1.0 / (gc_input_size ** 0.5))
+            gc_in_features = compress_dim
+        else:
+            self.compress = None
+            gc_in_features = gc_input_size
+
+        self.gc = nn.Linear(gc_in_features, gc_dim, bias=True)
+        self.pc = nn.Linear(gc_dim, pc_dim, bias=True)
+        self.dcn = nn.Linear(pc_dim, hidden_size, bias=True)
+
+        # initialise CB near zero
+        nn.init.zeros_(self.gc.bias)
+        nn.init.zeros_(self.pc.bias)
+        nn.init.zeros_(self.dcn.bias)
+
+        nn.init.normal_(self.gc.weight, std=0.01)
+        nn.init.normal_(self.pc.weight, std=0.1)
+        nn.init.normal_(self.dcn.weight, std=0.1)
+
+        self.cb_parameters = (
+            list(self.gc.parameters())
+            + list(self.pc.parameters())
+            + list(self.dcn.parameters())
+        )
+        if self.use_compression:
+            self.cb_parameters += list(self.compress.parameters())
+
+        self._hparams = dict(
+            hidden_size=hidden_size,
+            gc_dim=gc_dim,
+            pc_dim=pc_dim,
+            input_size=input_size,
+            use_hidden=use_hidden,
+            compress_dim=compress_dim,
+        )
+
+    def forward(
+        self,
+        h: torch.Tensor,
+        x: torch.Tensor = None,
+        return_all: bool = False,
+    ):
+        if self.use_hidden and self.use_input:
+            if x is None:
+                raise ValueError(
+                    "CB_bias was configured to use task input, but x is None."
+                )
+            gc_input = torch.cat([h, x], dim=-1)
+
+        elif self.use_hidden:
+            gc_input = h
+
+        else:
+            if x is None:
+                raise ValueError(
+                    "CB_bias was configured to use input only, but x is None."
+                )
+            gc_input = x
+
+        if self.use_compression:
+            compressed = self.compress(gc_input)
+            gc_in = compressed
+        else:
+            compressed = None
+            gc_in = gc_input
+
+        g_t = F.relu(self.gc(gc_in), inplace=False)
+        p_t = F.relu(self.pc(g_t), inplace=False)
+        d_t = self.dcn(p_t)
+        cb_bias = d_t
+
+        if return_all:
+            return {
+                "gc_input": gc_input,
+                "compressed": compressed,
+                "gc": g_t,
+                "pc": p_t,
+                "dcn": d_t,
+                "cb_bias": cb_bias,
+            }
+
+        return cb_bias
+
+class RecurrentAuxModule(nn.Module):
+    def __init__(self, input_size, aux_hidden_size, main_hidden_size,
+                 tau=1.5, afunc=nn.LeakyReLU, bias=True):
+        super().__init__()
+        self.aux_hidden_size = aux_hidden_size
+        self.main_hidden_size = main_hidden_size
+        self.tau = float(tau)
+        self.afunc = afunc()
+        self.inp = nn.Linear(input_size, aux_hidden_size, bias=bias)
+        self.hh = nn.Linear(aux_hidden_size, aux_hidden_size, bias=bias)
+        self.out = nn.Linear(aux_hidden_size, main_hidden_size, bias=bias)
+        self._hparams = dict(
+            model_type="RecurrentAuxModule",
+            input_size=input_size, aux_hidden_size=aux_hidden_size,
+            main_hidden_size=main_hidden_size, tau=tau,
+        )
+
+    def init_hidden(self, batch_size, device):
+        return 0.1 * torch.rand(batch_size, self.aux_hidden_size, device=device)
+
+    def step(self, c_t, h2_prev, return_all=False):
+        alpha = 1.0 / self.tau
+        pre = self.inp(c_t) + self.hh(h2_prev)
+        h2_new = (1.0 - alpha) * h2_prev + alpha * self.afunc(pre)
+        bias = self.out(h2_new)
+        if return_all:
+            return h2_new, {
+                "gc_input": c_t,
+                "gc": h2_new,   # closest analogue to the expanded GC code
+                "pc": h2_new,   # no separate PC stage; aliased for key compatibility
+                "dcn": bias,
+                "cb_bias": bias,
+            }
+        return h2_new, bias
+
+class ElmanRNNMultiHead(nn.Module):
+    """Elman RNN with an optional cerebellar feedforward bias:
+
+            h_{t+1} = (1 - alpha) h_t + alpha f(W_x x_t + W_h h_t + b + b_cb)
+    
+    """
+
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int = 64,
+        num_classes: int = 2,
+        num_readout_heads: int = 1,
+        tau: float = 1.5,
+        afunc=nn.LeakyReLU,
+        bias: bool = True,
+        use_cb_bias: bool = True,
+        cb_gc_dim: int = 128,
+        cb_pc_dim: int = 64,
+        cb_no_hidden: bool = False,
+        cb_input_size: int = 0,
+        cb_max_ratio: float = 1.0,
+        cb_compress_dim: int = 0,
+        rnn_aux_ctrl: bool = False,
+        aux_hidden_size: int = 139, # matches CB with 256 gc layer
+    ):
+        super().__init__()
+
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_classes = num_classes
+        self.num_readout_heads = num_readout_heads
+        self.tau = float(tau)
+        self.afunc = afunc()
+
+        self.use_cb_bias = use_cb_bias
+        self.cb_no_hidden = cb_no_hidden
+        self.cb_input_size = cb_input_size
+        self.cb_max_ratio = cb_max_ratio
+        self.cb_compress_dim = cb_compress_dim
+        self.rnn_aux_ctrl = rnn_aux_ctrl
+        self.aux_hidden_size = aux_hidden_size
+        # RNN core
+        self.inp = nn.Linear(input_size, hidden_size, bias=bias)
+        self.hh = nn.Linear(hidden_size, hidden_size, bias=bias)
+
+        # one readout head per task/curriculum level
+        self.heads = nn.ModuleList(
+            [nn.Linear(hidden_size, num_classes) for _ in range(num_readout_heads)]
+        )
+
+        # Cerebellar Bias module
+        if self.use_cb_bias:
+            if self.rnn_aux_ctrl:
+                aux_input_size = 0
+                if not cb_no_hidden:
+                    aux_input_size += hidden_size
+                if cb_input_size > 0:
+                    aux_input_size += cb_input_size
+                self.cb = RecurrentAuxModule(
+                    input_size=aux_input_size,
+                    aux_hidden_size=aux_hidden_size,
+                    main_hidden_size=hidden_size,
+                )
+            else:
+                if self.cb_no_hidden and cb_input_size <= 0:
+                    raise ValueError(
+                        "cb_no_hidden=True requires cb_input_size > 0 so CB can receive task input."
+                    )
+                self.cb = CB_bias(
+                    hidden_size=hidden_size, gc_dim=cb_gc_dim, pc_dim=cb_pc_dim,
+                    input_size=cb_input_size, use_hidden=not cb_no_hidden,
+                    compress_dim=cb_compress_dim,
+                )
+        else:
+            self.cb = None
+
+        self._hparams = dict(
+            model_type="ElmanRNNMultiHead",
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_classes=num_classes,
+            num_readout_heads=num_readout_heads,
+            tau=tau,
+            bias=bias,
+            use_cb_bias=use_cb_bias,
+            cb_gc_dim=cb_gc_dim if use_cb_bias else None,
+            cb_pc_dim=cb_pc_dim if use_cb_bias else None,
+            cb_no_hidden=cb_no_hidden if use_cb_bias else None,
+            cb_input_size=cb_input_size if use_cb_bias else None,
+            cb_max_ratio=cb_max_ratio if use_cb_bias else None,
+            cb_compress_dim=cb_compress_dim if use_cb_bias else None,
+            activation=afunc.__name__,
+            rnn_aux_ctrl=rnn_aux_ctrl,
+        )
+
+    def forward(
+        self,
+        data: torch.Tensor,
+        hs=None,
+        index_in_head=None,
+        return_timewise: bool = False,
+        task_id: int = None,
+        return_cb: bool = False,
+        return_dynamics: bool = False,
+    ):
+        """data: [T, B, input_size]; hs: optional initial hidden state [B, H].
+                index_in_head: return only this head (None = all heads).
+                return_timewise: readouts at every timestep [T, B, C] instead of the final state [B, C].
+                task_id: if given and cb_input_size > 0, CB receives a one-hot task vector.
+                return_cb / return_dynamics: also return CB activity / full dynamics over time.
+        
+        """
+        T, B, _ = data.shape
+        device = data.device
+        alpha = 1.0 / self.tau
+
+        if hs is None:
+            h = 0.1 * torch.rand(B, self.hidden_size, device=device)
+        else:
+            h = hs[0] if isinstance(hs, list) else hs
+
+        x_proj = self.inp(data)
+
+        h_seq = [] if return_timewise else None
+
+        h_seq_full = [] if return_dynamics else None
+        pre_seq = [] if return_dynamics else None
+        post_seq = [] if return_dynamics else None
+        xproj_seq = [] if return_dynamics else None
+
+        collect_cb = self.use_cb_bias and (return_cb or return_dynamics)
+
+        gc_input_seq = [] if (collect_cb and return_dynamics) else None
+        gc_seq = [] if collect_cb else None
+        pc_seq = [] if (collect_cb and return_dynamics) else None
+        dcn_seq = [] if (collect_cb and return_dynamics) else None
+        cb_bias_seq = [] if collect_cb else None
+
+        # h2 initialised once, before the loop
+        if self.use_cb_bias and self.rnn_aux_ctrl:
+            h2 = self.cb.init_hidden(B, device)
+        else:
+            h2 = None
+
+        for t in range(T):
+            h_prev = h
+            pre = x_proj[t] + self.hh(h_prev)
+
+            if self.use_cb_bias:
+                if task_id is not None and self.cb_input_size > 0:
+                    if self.rnn_aux_ctrl:
+                        raise NotImplementedError(
+                            "task_id path not wired up for rnn_aux_ctrl — "
+                            "unused in the paper anyway, guard rather than silently misuse."
+                        )
+                    cb_input = torch.zeros(B, self.cb_input_size, device=device)
+                    cb_input[:, task_id] = 1.0
+
+                    if collect_cb:
+                        cb_dict = self.cb(h_prev, x=cb_input, return_all=True)
+                        b_cb = cb_dict["cb_bias"]
+                    else:
+                        cb_dict = None
+                        b_cb = self.cb(h_prev, x=cb_input, return_all=False)
+
+                    b_cb = rescale_to_reference_norm(
+                        vec=b_cb, ref_vec=pre, max_ratio=self.cb_max_ratio,
+                    )
+                    if cb_dict is not None:
+                        cb_dict["cb_bias"] = b_cb
+
+                elif self.cb_input_size > 0:
+                    cb_input = data[t]
+
+                    if self.rnn_aux_ctrl:
+                        c_t = torch.cat([h_prev, cb_input], dim=-1)
+                        h2, aux_out = self.cb.step(c_t, h2, return_all=collect_cb)
+                        cb_dict = aux_out if collect_cb else None
+                        b_cb = aux_out["cb_bias"] if collect_cb else aux_out
+                    else:
+                        if collect_cb:
+                            cb_dict = self.cb(h_prev, x=cb_input, return_all=True)
+                            b_cb = cb_dict["cb_bias"]
+                        else:
+                            cb_dict = None
+                            b_cb = self.cb(h_prev, x=cb_input, return_all=False)
+
+                else:
+                    cb_input = None
+
+                    if self.rnn_aux_ctrl:
+                        h2, aux_out = self.cb.step(h_prev, h2, return_all=collect_cb)
+                        cb_dict = aux_out if collect_cb else None
+                        b_cb = aux_out["cb_bias"] if collect_cb else aux_out
+                    else:
+                        if collect_cb:
+                            cb_dict = self.cb(h_prev, x=None, return_all=True)
+                            b_cb = cb_dict["cb_bias"]
+                        else:
+                            cb_dict = None
+                            b_cb = self.cb(h_prev, x=None, return_all=False)
+
+                post = pre + b_cb
+
+            else:
+                cb_dict = None
+                b_cb = None
+                post = pre
+
+            h = (1.0 - alpha) * h_prev + alpha * self.afunc(post)
+
+            if return_timewise:
+                h_seq.append(h)
+
+            if return_dynamics:
+                xproj_seq.append(x_proj[t])
+                pre_seq.append(pre)
+                post_seq.append(post)
+                h_seq_full.append(h)
+
+                if self.use_cb_bias:
+                    gc_input_seq.append(cb_dict["gc_input"])
+                    gc_seq.append(cb_dict["gc"])
+                    pc_seq.append(cb_dict["pc"])
+                    dcn_seq.append(cb_dict["dcn"])
+                    cb_bias_seq.append(cb_dict["cb_bias"])
+
+            elif return_cb and self.use_cb_bias:
+                gc_seq.append(cb_dict["gc"])
+                cb_bias_seq.append(cb_dict["cb_bias"])
+
+        if index_in_head is None:
+            heads_to_use = list(self.heads)
+        else:
+            heads_to_use = [self.heads[index_in_head]]
+
+        if return_timewise:
+            h_seq_tensor = torch.stack(h_seq, dim=0)
+            out_class = [head(h_seq_tensor) for head in heads_to_use]
+        else:
+            out_class = [head(h) for head in heads_to_use]
+
+        hs_out = [h]
+
+        if return_dynamics:
+            dynamics = {
+                "hidden": torch.stack(h_seq_full, dim=0),
+                "x_proj": torch.stack(xproj_seq, dim=0),
+                "pre": torch.stack(pre_seq, dim=0),
+                "post": torch.stack(post_seq, dim=0),
+            }
+
+            if self.use_cb_bias:
+                dynamics.update(
+                    {
+                        "gc_input": torch.stack(gc_input_seq, dim=0),
+                        "gc": torch.stack(gc_seq, dim=0),
+                        "pc": torch.stack(pc_seq, dim=0),
+                        "dcn": torch.stack(dcn_seq, dim=0),
+                        "cb_bias": torch.stack(cb_bias_seq, dim=0),
+                    }
+                )
+
+            return hs_out, out_class, dynamics
+
+        if return_cb and self.use_cb_bias:
+            dynamics = {
+                "gc": torch.stack(gc_seq, dim=0),
+                "cb_bias": torch.stack(cb_bias_seq, dim=0),
+            }
+
+            return hs_out, out_class, dynamics
+
+        return hs_out, out_class

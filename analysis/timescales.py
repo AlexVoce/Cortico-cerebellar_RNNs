@@ -6,20 +6,12 @@ import numpy as np
 import pandas as pd
 
 
-# =============================================================================
 # Loading
-# =============================================================================
 
 def load_timescale_pkls(timescale_dir):
-    """
-    Load timescale pickle files named timescales_N*.pkl from one run.
-
-    Expected file contents:
-        obj["N"]
-        obj["shared_tau"]
-        obj["modules"][module]["taus_net"]
-        obj["modules"][module]["selected_models"]
-        obj["modules"][module]["ac_pop"]
+    """Load timescales_N*.pkl files from one run (N, shared_tau, per-module taus_net,
+        selected_models and ac_pop).
+    
     """
     timescale_dir = Path(timescale_dir)
 
@@ -47,16 +39,10 @@ def load_timescale_pkls(timescale_dir):
     return data
 
 
-# =============================================================================
 # Helpers
-# =============================================================================
 
 def estimate_e_folding_lag(ac, normalize=True):
-    """
-    Estimate timescale as first lag where autocorrelation <= 1/e.
-
-    Returns np.nan if the curve never crosses 1/e.
-    """
+    """First lag where autocorrelation <= 1/e, or NaN if it never crosses."""
     ac = np.asarray(ac, dtype=float)
 
     if len(ac) == 0:
@@ -106,12 +92,7 @@ def _concat_1d_arrays(series):
 
 
 def _stack_equal_length_arrays(series, allow_trim=True):
-    """
-    Stack arrays across runs.
-
-    If allow_trim=True and lengths differ, all arrays are trimmed to the
-    minimum length. This is usually safer for autocorrelation curves.
-    """
+    """Stack arrays across runs, trimming to the shortest if allow_trim."""
     arrs = []
 
     for x in series:
@@ -138,21 +119,10 @@ def _stack_equal_length_arrays(series, allow_trim=True):
     return np.stack(arrs, axis=0)  # [n_runs, T]
 
 
-# =============================================================================
 # Per-run summary
-# =============================================================================
 
 def summarize_timescale_run(timescale_data):
-    """
-    Summarise timescale results for one run.
-
-    Keeps both scalar summaries and raw arrays:
-        - taus
-        - selected_models
-        - ac_pop
-
-    These raw arrays are needed later for pooled/averaged plots.
-    """
+    """Scalar summaries and raw arrays (taus, selected_models, ac_pop) for one run."""
     rows = []
 
     for N, obj in sorted(timescale_data.items()):
@@ -199,7 +169,7 @@ def summarize_timescale_run(timescale_data):
                 "module": module,
                 "shared_tau": shared_tau,
 
-                # raw arrays retained for downstream pooled/curve analyses
+                # raw arrays for pooled analyses
                 "taus": taus,
                 "selected_models": selected,
                 "ac_pop": ac_pop,
@@ -226,12 +196,7 @@ def summarize_timescale_run(timescale_data):
 
 
 def summarize_timescale_multiple_runs(run_paths):
-    """
-    Summarise timescale results across multiple run directories.
-
-    Each run_path should contain:
-        run_path/timescales/timescales_N*.pkl
-    """
+    """Summarise timescales across runs (each with run_path/timescales/timescales_N*.pkl)."""
     all_dfs = []
 
     for run_path in run_paths:
@@ -252,11 +217,7 @@ def summarize_timescale_multiple_runs(run_paths):
     return pd.concat(all_dfs, ignore_index=True)
 
 def average_across_runs_timescales(timescale_runs_df, allow_trim_ac=True):
-    """
-    Average timescale summaries across runs.
-
-    Input should be the output of summarize_timescale_multiple_runs().
-    """
+    """Average the output of summarize_timescale_multiple_runs across runs."""
     required_cols = {
         "N",
         "module",
@@ -355,17 +316,18 @@ def plot_two_task_full_vs_reservoir_e_folding_2x2(
     fig_height=2,
     ylim_vals=None,
     figsize=None,
+    show_top_right_yticklabels=False,
 ):
     full_color_map = {
         "hidden":  "#20A0C9",
-        "gc":      "#0553CF",
-        "pc":      "#33BBFF",
+        "gc":      "#bdbdbdff",
+        "pc":      "#bdbdbdff",
         "cb_bias": "#5BD7CD",
     }
     res_color_map = {
         "hidden":  "#FF5F4A",
-        "gc":      "#D62E24",
-        "pc":      "#FF8200",
+        "gc":      "#bdbdbdff",
+        "pc":      "#bdbdbdff",
         "cb_bias": "#FFC100",
     }
     nicer_names = {
@@ -384,9 +346,9 @@ def plot_two_task_full_vs_reservoir_e_folding_2x2(
     
     panel_specs = [
         (task1_title, "Full model", avg_df_full_task1, full_color_map),
-        (task1_title, "Reservoir model", avg_df_res_task1, res_color_map),
+        (task1_title, "Frozen-core model", avg_df_res_task1, res_color_map),
         (task2_title, "Full model", avg_df_full_task2, full_color_map),
-        (task2_title, "Reservoir model", avg_df_res_task2, res_color_map),
+        (task2_title, "Frozen-core model", avg_df_res_task2, res_color_map),
     ]
 
     fig, axs = plt.subplots(2, 2, figsize=figsize, squeeze=False, sharey="row",sharex=False)
@@ -440,6 +402,9 @@ def plot_two_task_full_vs_reservoir_e_folding_2x2(
             else:
                 ax.set_ylim(ylim_vals)
 
+    # optionally show y tick labels on the top-right panel
+    if show_top_right_yticklabels:
+        axs[1].tick_params(axis="y", labelleft=True)
     axs[2].set_xlabel("N", fontsize=label_fs)
     axs[3].set_xlabel("N", fontsize=label_fs)
     axs[0].set_ylabel("DMS\n"+ r"$\tau_{pop}$", fontsize=label_fs)
@@ -448,15 +413,10 @@ def plot_two_task_full_vs_reservoir_e_folding_2x2(
     axs[2].legend(fontsize=legend_fs-2, loc="upper left",frameon=False)
     axs[3].legend(fontsize=legend_fs-2, loc="upper left",frameon=False)
 
-    axs[1].tick_params(axis="y", labelleft=False)
     axs[3].tick_params(axis="y", labelleft=False)
-    # also remove ticks and spines from middle column for cleaner look
-    axs[1].tick_params(axis="y", left=False)
-    axs[1].spines["left"].set_visible(False)
     axs[3].tick_params(axis="y", left=False)
     axs[3].spines["left"].set_visible(False)
 
-    # ax 3 major locator on X for 3 ticks at 5,10,15
     axs[3].xaxis.set_major_locator(plt.FixedLocator([5,10,15]))
 
     plt.tight_layout()
@@ -484,23 +444,7 @@ def plot_two_task_small_vs_large_e_folding_2x2(
     ylim_vals=None,
     figsize=None,
 ):
-    """
-    Plot population AC 1/e crossing lag across N in a 2x2 layout.
-
-    Rows:
-        DMS
-        Parity
-
-    Columns:
-        Small CB-RNN
-        Large CB-RNN
-
-    Expected dataframe columns:
-        module
-        N
-        pop_e_folding_lag_mean
-        pop_e_folding_lag_sem
-    """
+    """Population AC 1/e crossing lag vs N, 2x2 (rows: DMS, Parity; columns: small, large CB-RNN)."""
 
     small_color_map = {
         "hidden":  "#20A0C9",
@@ -606,11 +550,10 @@ def plot_two_task_small_vs_large_e_folding_2x2(
     axs[0].set_ylabel("DMS\n" + r"$\tau_{pop}$", fontsize=label_fs)
     axs[2].set_ylabel("Parity\n" + r"$\tau_{pop}$", fontsize=label_fs)
 
-    # remove all top and right spines for cleaner look
     for ax in axs:
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-    # Hide duplicated y-axis labels/ticks on right column
+    # hide duplicated y-axis labels on the right column
     axs[1].tick_params(axis="y", labelleft=False, left=False)
     axs[1].spines["left"].set_visible(False)
 
@@ -618,7 +561,6 @@ def plot_two_task_small_vs_large_e_folding_2x2(
     axs[3].tick_params(axis="y", labelleft=False, left=False)
     axs[3].spines["left"].set_visible(False)
 
-    # Legends: one for small, one for large, or just bottom panels
     axs[2].legend(
         fontsize=legend_fs,
         loc="upper left",

@@ -13,9 +13,7 @@ import torch.nn as nn
 from scipy.optimize import curve_fit
 
 
-# ============================================================
 # Threading
-# ============================================================
 
 def set_cpu_threads(
     omp_threads: str = "2",
@@ -30,9 +28,7 @@ def set_cpu_threads(
     torch.set_num_threads(torch_threads)
 
 
-# ============================================================
 # Config / checkpoint loading
-# ============================================================
 
 def load_run_config(run_dir: str | Path) -> dict:
     run_dir = Path(run_dir)
@@ -70,11 +66,7 @@ def load_state_dict_from_checkpoint(ckpt_path: str | Path, device: str = "cpu") 
 
 
 def load_state_dict_legacy(run_dir: str | Path, N: int, device: str = "cpu") -> dict:
-    """
-    Supports checkpoint names:
-        rnn_N5_N5
-        rnn_N5_N5.pt
-    """
+    """Load checkpoint rnn_N{N}_N{N}[.pt]."""
     run_dir = Path(run_dir)
 
     candidates = [
@@ -108,10 +100,7 @@ def find_available_Ns_legacy(run_dir: str | Path) -> List[int]:
 
 
 def find_multitask_checkpoints(run_dir: str | Path) -> List[dict]:
-    """
-    Finds multitask .pt checkpoints like:
-        shared_multitask_ep207_N10.pt
-    """
+    """Multitask checkpoints named like shared_multitask_ep207_N10.pt."""
     run_dir = Path(run_dir)
     ckpt_dir = run_dir / "checkpoints"
 
@@ -143,9 +132,7 @@ def find_multitask_checkpoints(run_dir: str | Path) -> List[dict]:
     return sorted(out, key=lambda x: x["N"])
 
 
-# ============================================================
 # Model build
-# ============================================================
 
 def _infer_model_type_from_state_dict(state_dict: dict) -> str:
     """
@@ -178,12 +165,7 @@ def _normalise_model_type(model_type) -> Optional[str]:
 
 
 def _get_model_config(cfg: dict) -> dict:
-    """
-    Supports both:
-        cfg["model_config"]["model"]
-    and:
-        cfg["model"]
-    """
+    """Model config from cfg['model_config']['model'] or cfg['model']."""
     if "model_config" in cfg and isinstance(cfg["model_config"], dict):
         if "model" in cfg["model_config"]:
             return cfg["model_config"]["model"]
@@ -202,9 +184,7 @@ def _get_head_keys(state_dict: dict) -> List[str]:
 
 
 def _infer_core_dims(model_type: str, state_dict: dict) -> tuple[int, int]:
-    """
-    Returns hidden_size, input_size.
-    """
+    """Returns hidden_size, input_size."""
     if model_type == "elman":
         return state_dict["inp.weight"].shape
 
@@ -223,10 +203,7 @@ def _infer_cb_dims(
     cli_args: dict,
     use_cb_bias: bool,
 ) -> tuple[int, int, int, bool]:
-    """
-    Returns:
-        cb_gc_dim, cb_pc_dim, cb_input_size, cb_no_hidden
-    """
+    """Returns cb_gc_dim, cb_pc_dim, cb_input_size, cb_no_hidden."""
     if not use_cb_bias:
         return 128, 64, 0, False
 
@@ -272,12 +249,8 @@ def _infer_cb_dims(
 
 
 def build_model_from_config_and_state(cfg: dict, state_dict: dict, device: str = "cpu"):
-    """
-    Build a cleaned ElmanRNNMultiHead or GRUMultiHeadWithCB from config.json
-    and a saved state_dict.
-    """
-    from model.models_cb import ElmanRNNMultiHead
-    from model.models_gru import GRUMultiHeadWithCB
+    """Build an ElmanRNNMultiHead or GRUMultiHeadWithCB from config.json and a state_dict."""
+    from model.cb_rnn import ElmanRNNMultiHead
 
     model_cfg = _get_model_config(cfg)
     cli_args = cfg.get("cli_args", {})
@@ -359,6 +332,8 @@ def build_model_from_config_and_state(cfg: dict, state_dict: dict, device: str =
         ).to(device)
 
     else:
+        from model.cb_gru import GRUMultiHeadWithCB
+
         model = GRUMultiHeadWithCB(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -390,9 +365,7 @@ def build_model_from_config_and_state(cfg: dict, state_dict: dict, device: str =
     return model
 
 
-# ============================================================
 # Input builders
-# ============================================================
 
 def make_random_binary_input(
     T: int,
@@ -417,16 +390,11 @@ def make_random_multitask_input(
     batch_size: int,
     device: str = "cpu",
 ) -> torch.Tensor:
-    """
-    For multitask models trained with shared binary sequences and no task cue.
-    Shape: [T, B, 1].
-    """
+    """Shared binary sequences [T, B, 1] for multitask models (no task cue)."""
     return (torch.rand(T, batch_size, 1, device=device) < 0.5).float()
 
 
-# ============================================================
 # Long dynamics collection
-# ============================================================
 
 def collect_long_dynamics(
     model,
@@ -436,14 +404,7 @@ def collect_long_dynamics(
     device: str = "cpu",
     input_builder: Optional[Callable[[int, int, str], torch.Tensor]] = None,
 ) -> Dict[str, Optional[np.ndarray]]:
-    """
-    Simulate long activity and return post-burn-in dynamics.
-
-    Assumes the model forward supports:
-        model(x, return_timewise=False, return_dynamics=True)
-
-    Returns arrays of shape [T_eff, B, D].
-    """
+    """Simulate long activity and return post-burn-in dynamics, each [T_eff, B, D]."""
     model.eval()
 
     if input_builder is None:
@@ -482,16 +443,10 @@ def collect_long_dynamics(
     return out
 
 
-# ============================================================
-# AC computation + fitting
-# ============================================================
+# Autocorrelation and fitting
 
 def comp_ac_fft(data: np.ndarray) -> np.ndarray:
-    """
-    data: [n_trials, T]
-
-    Returns average non-normalized autocorrelation across trials.
-    """
+    """Mean non-normalised autocorrelation across trials of data [n_trials, T]."""
     n = data.shape[1]
 
     xp = data - data.mean(axis=1, keepdims=True)
@@ -515,12 +470,10 @@ def double_exp(time, a, tau1, tau2, coeff):
 
 
 def model_comp(ac: np.ndarray, lags: np.ndarray, min_lag: int, max_lag: int):
-    """
-    Fit single vs double exponential to normalized autocorrelation.
+    """Fit single vs double exponentials to a normalised autocorrelation.
 
-    Returns:
-        selected_model: 1, 2, or nan
-        selected_tau: scalar or sorted [fast, slow]
+        Returns selected_model (1, 2 or nan) and selected_tau (scalar or [fast, slow]).
+    
     """
     xdata = lags[min_lag:max_lag + 1]
     ydata = ac[min_lag:max_lag + 1] / ac[0]
@@ -627,9 +580,7 @@ def compute_module_ac_and_taus(
     }
 
 
-# ============================================================
 # One-checkpoint analysis
-# ============================================================
 
 def analyze_checkpoint_timescales(
     run_dir: str | Path,
@@ -683,9 +634,7 @@ def analyze_checkpoint_timescales(
     }
 
 
-# ============================================================
-# Saving helpers
-# ============================================================
+# Saving
 
 def save_timescale_result(result: dict, save_path: str | Path) -> None:
     save_path = Path(save_path)

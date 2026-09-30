@@ -1,4 +1,3 @@
-# scaling.py
 import os
 import numpy as np
 import json
@@ -10,9 +9,11 @@ os.environ["PATH"] = "/Library/TeX/texbin:" + os.environ["PATH"]
 
 from pathlib import Path
 
-# ── palette ──────────────────────────────────────────────────────────────────
-CB_COLOR  = "salmon"   # red family
-RNN_COLOR = "cornflowerblue"   # blue family
+from analysis.single_task_plotting_utils import _collect_runs as _collect_runs_for_auc
+
+# palette
+CB_COLOR  = "salmon"
+RNN_COLOR = "cornflowerblue"
 
 # param counts in ascending order, matched pairs
 PARAM_SIZES = [
@@ -35,7 +36,6 @@ mpl.rcParams.update({
     "ytick.labelsize": 12,
     "legend.fontsize": 12,
 })
-
 
 
 def _find_runs(base_dir, pattern):
@@ -137,12 +137,7 @@ def find_epoch_to_fraction_of_max_n(
     min_required_epochs=50,
     max_reference=None,
 ):
-    """
-    If max_reference is None:
-        target = fraction * max N within this run
-    else:
-        target = fraction * max_reference
-    """
+    """First epoch reaching fraction * max N (of this run, or of max_reference if given)."""
     stats_path = run_dir / "stats.npy"
     if not stats_path.exists():
         raise RuntimeError(f"Missing stats.npy in {run_dir}")
@@ -199,13 +194,14 @@ def _collect_epoch_metrics(task_dir, pattern, mode, fraction,
 
 def plot_cb_vs_rnn_scaling(
     task_configs,
-    param_sizes=None,  # kept only so old calls do not break
-    mode="half_global_max",
+    param_sizes=None,
+    mode="auc",
     fraction=0.5,
     fig_height=1.1,
     min_required_epochs=50,
     figsize=(8.2, 4.8),
     sharey=True,
+    save_path=None
 ):
     scale_factor = 1
     linewidth = 397.5
@@ -280,7 +276,7 @@ def plot_cb_vs_rnn_scaling(
                 rnn_x_vals.append(x)
                 rnn_means.append(np.mean(ys))
 
-        # Sort before plotting lines, so the line follows increasing parameter count
+        # sort by parameter count before drawing lines
         if cb_means:
             cb_sorted = sorted(zip(cb_x_vals, cb_means), key=lambda z: z[0])
             cb_x_vals, cb_means = zip(*cb_sorted)
@@ -322,5 +318,172 @@ def plot_cb_vs_rnn_scaling(
 
     for ax in axes[1:]:
         ax.set_ylabel("")
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=900, bbox_inches="tight")
+
+    return fig, axes
+
+
+def _collect_auc_metrics(task_dir, pattern, clip_len=None, clip_N=None, pad_early_stops=False):
+    """Return list of (n_params, auc) for all runs matching pattern."""
+    run_dirs = _find_runs(task_dir, pattern)
+    data = _collect_runs_for_auc(
+        task_dir, pattern,
+        clip_len=clip_len, clip_N=clip_N,
+        pad_early_stops=pad_early_stops,
+    )
+    auc_by_run = dict(zip(data["runs"], data["auc"]))
+
+    pts = []
+    for run_dir in run_dirs:
+        auc_val = auc_by_run.get(run_dir.name)
+        if auc_val is None or not np.isfinite(auc_val):
+            continue
+        try:
+            n_params, _ = _extract_trainable_params(run_dir)
+        except RuntimeError:
+            continue
+        pts.append((n_params, auc_val))
+    return pts
+
+
+def plot_cb_vs_rnn_auc_scaling(
+    task_configs,
+    clip_len=None,
+    clip_N=None,
+    pad_early_stops=False,
+    fig_height=1.1,
+    figsize=None,
+    sharey=False,
+    big_fonts=False,
+    save_path=None,
+):
+    """AUC of the N progression vs trainable parameter count, CB-RNN vs RNN-only, one subplot per task."""
+    scale_factor = 1
+    linewidth = 397.5
+    inches_per_pt = 1 / 72.27
+    fig_width = linewidth * inches_per_pt
+
+    label_fs = 9 * scale_factor
+    tick_fs = 8 * scale_factor
+
+    n_tasks = len(task_configs)
+    if figsize is None:
+        figsize = (fig_width * scale_factor, fig_height)
+
+    fig, axes = plt.subplots(
+        1, n_tasks, figsize=figsize, sharey=sharey, constrained_layout=True
+    )
+    if n_tasks == 1:
+        axes = [axes]
+
+    for ax, cfg in zip(axes, task_configs):
+        task_dir = Path(cfg["task_dir"])
+        task_name = cfg["task_name"]
+        groups = cfg["groups"]
+        task_clip_len = cfg.get("clip_len", clip_len)
+        task_clip_N = cfg.get("clip_N", clip_N)
+        task_pad_early_stops = cfg.get("pad_early_stops", pad_early_stops)
+
+        cb_x_vals, cb_means = [], []
+        rnn_x_vals, rnn_means = [], []
+
+        for label, group_cfg in groups.items():
+            pattern = group_cfg["pattern"]
+            color = group_cfg.get("color", "gray")
+
+            try:
+                pts = _collect_auc_metrics(
+                    task_dir,
+                    pattern,
+                    clip_len=task_clip_len,
+                    clip_N=task_clip_N,
+                    pad_early_stops=task_pad_early_stops,
+                )
+            except RuntimeError:
+                pts = []
+
+            if not pts:
+                print(f"[WARNING] No matches for {task_name}: {label} | pattern={pattern}")
+                continue
+
+            x = np.mean([p[0] for p in pts])
+            ys = [p[1] for p in pts]
+
+            print(f"{task_name} | {label} | pattern={pattern} | n={len(ys)}")
+
+            ax.scatter(
+                [x] * len(ys),
+                ys,
+                color=color,
+                s=10,
+                alpha=0.4,
+                edgecolors="k",
+                zorder=3,
+            )
+
+            if label.startswith("CB"):
+                cb_x_vals.append(x)
+                cb_means.append(np.mean(ys))
+            elif label.startswith("RNN"):
+                rnn_x_vals.append(x)
+                rnn_means.append(np.mean(ys))
+
+        if cb_means:
+            cb_sorted = sorted(zip(cb_x_vals, cb_means), key=lambda z: z[0])
+            cb_x_vals, cb_means = zip(*cb_sorted)
+            ax.plot(
+                cb_x_vals,
+                cb_means,
+                color=CB_COLOR,
+                lw=1.5 if big_fonts else 1.2,
+                marker="o",
+                ms=4,
+                zorder=5,
+                label="CB-RNN",
+            )
+
+        if rnn_means:
+            rnn_sorted = sorted(zip(rnn_x_vals, rnn_means), key=lambda z: z[0])
+            rnn_x_vals, rnn_means = zip(*rnn_sorted)
+            ax.plot(
+                rnn_x_vals,
+                rnn_means,
+                color=RNN_COLOR,
+                lw=1.5 if big_fonts else 1.2,
+                marker="o",
+                ms=4,
+                zorder=5,
+                label="RNN",
+            )
+
+        ax.set_title(task_name, fontsize=label_fs)
+        ax.set_xlabel("Trainable parameters", fontsize=label_fs)
+
+        ax.xaxis.set_major_locator(plt.MaxNLocator(nbins=5, integer=True))
+        ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos: f"{int(x / 1e3)}K"))
+        ax.yaxis.set_major_locator(plt.MaxNLocator(nbins=3, integer=True))
+        ax.tick_params(axis="both", labelsize=tick_fs)
+        ax.spines[["top", "right"]].set_visible(False)
+
+    axes[0].set_ylabel("AUC", fontsize=label_fs)
+    for ax in axes[1:]:
+        ax.set_ylabel("")
+
+    axes[-1].legend(frameon=False, fontsize=tick_fs)
+    if big_fonts:
+        for ax in axes:
+            ax.title.set_fontsize(label_fs + 4)
+            ax.xaxis.label.set_fontsize(label_fs + 4)
+            ax.yaxis.label.set_fontsize(label_fs + 4)
+            ax.tick_params(axis="both", labelsize=tick_fs + 2)
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
 
     return fig, axes

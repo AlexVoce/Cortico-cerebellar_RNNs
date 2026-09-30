@@ -1,47 +1,90 @@
 # Cortico-cerebellar RNNs
 
-This repository contains code for training and analysing recurrent neural networks augmented with a cerebellar-inspired feedforward bias module. The project tests whether modular cortico-cerebellar structure can improve learning efficiency on temporal sequencing tasks compared with recurrent-only baselines.
+Code and results for training and analysing recurrent neural networks with a cerebellar-inspired bias module (CB-RNNs).
 
-The core model is a recurrent network with an optional cerebellar-inspired module that receives the recurrent hidden state and the current task input. This module generates a hidden-sized bias signal that is injected back into the recurrent transition. Models are evaluated on curriculum-based temporal memory tasks, including delayed match-to-sample and parity.
+The model is a recurrent network with an optional feedforward module. The module reads the recurrent hidden state and the current input, expands them into a large granule-cell-like layer, and returns a hidden-sized bias that is added to the recurrent update. The networks are trained with a curriculum on temporal memory tasks, mainly delayed match-to-sample (DMS) and N-bit parity. They are compared with recurrent-only baselines that have a matched parameter count.
 
-## Project status
-The manuscript is currently in preparation. Results, scripts, and documentation may be updated as the project is finalised.
+The trained runs used in the paper are included under `results/`, so every figure and table can be reproduced without retraining.
 
-The repository is intended for research reproducibility rather than as a general-purpose machine learning library. APIs may change as the manuscript and analyses are finalised.
+## Setup
 
----
+Tested with Python 3.10.
+
+```bash
+pip install -r requirements.txt
+```
+
+The figures use LaTeX text rendering (`text.usetex`), so a LaTeX installation is needed. Cell 2 of the notebook adds the macOS TeX path to `PATH`; on other systems it has no effect and can be removed.
+
+## Reproducing the figures
+
+Run `paper_figures.ipynb` from the repository root. It is organised by figure (Figures 2-6, then the appendix figures and tables) and reads everything from `results/`.
+
+Figure 6 can also be drawn outside the notebook:
+
+```bash
+python -m analysis.mechanism_plots
+```
+
+This writes the panels to `Figures/ICLR/`. The data behind Figure 6 is precomputed in `results/mechanistic_analysis/`. To regenerate it (slow):
+
+```bash
+python -m analysis.run_dms_memory_propagation
+python -m analysis.run_dms_memory_dynamics
+python -m analysis.dms_memory_dynamics_stats
+python -m analysis.run_parity_cb_encoding
+```
+
+## Training
+
+`training/train.py` is the single entry point for all training runs. Each run folder in `results/` contains a `config.json` that records the arguments it was trained with (`cli_args`). For example, one single-task DMS CB-RNN:
+
+```bash
+python training/train.py --task dms --model_type elman --curriculum_type single \
+    --num_neurons 64 --gc_dim 256 --cb_sees_input --readout_mode single --afunc leakyrelu \
+    --rnn_lr 0.01 --cb_lr 0.01 --num_epochs 1000 \
+    --base_path ./results/my_runs
+```
+
+Add `--no_cb` for a recurrent-only baseline. `--multitask`, `--ct_switch` and `--curriculum_type reservoir` select the multitask, task-switching and reservoir training modes. `python training/train.py --help` lists every option.
+
 ## Repository structure
 
 ```text
 .
+├── paper_figures.ipynb           # All paper figures and tables
 ├── model/
-│   ├── models_cb.py              # Elman RNN and cerebellar bias module
-│   └── GRU_test.py               # GRU variant with optional cerebellar bias (control)
-│
+│   ├── cb_rnn.py                 # Elman RNN with the cerebellar bias module
+│   └── cb_gru.py                 # GRU variant (control)
 ├── tasks/
-│   ├── task_registry.py          # Task specifications, losses, metrics, and advance rules
-│   ├── tasks_using.py            # Sequence/task generation utilities
-│   ├── multitask_impl.py         # Multi-task training implementation
-│   ├── continual_impl.py         # Continual-learning implementation
-│   └── task_switch_one.py        # Task-switching implementation
-│
+│   ├── task_generators.py        # Sequence generation for each task
+│   ├── registry.py               # Task specifications, losses, metrics and curriculum rules
+│   ├── multitask.py              # Multitask training
+│   ├── task_switch.py            # Task-switching training
+│   └── continual.py              # Sequential (continual) training
 ├── training/
-│   ├── base.py                   # Shared train/evaluate utilities
-│   ├── train_utils.py            # Gradient, optimizer, and module-freezing utilities
-│   ├── train_reservoir.py        # Reservoir/interleaved-reservoir training
-│   ├── variants.py               # Reservoir curriculum-stage logic
-│   ├── train.py                  # Main training entry point
-│   └── save.py                   # Checkpoint/result saving utilities
-│
-├── analysis/                     # Analysis and plotting scripts
-│
-├── results/                      # Results used for analysis
-│   ├── GRU_test/
-│   ├── multi_task/
-│   ├── reservoir_comparisons/
-│   ├── single_task/
-│   └── task_switch/
-│
-├── final_analysis_figs.ipynb     # Figure generation + analysis notebook
-└── README.md
+│   ├── train.py                  # Training entry point
+│   ├── base.py                   # Shared train/evaluate loop
+│   ├── reservoir.py              # Reservoir training
+│   ├── variants.py               # Reservoir curriculum stages
+│   ├── utils.py                  # Gradient, optimiser and freezing utilities
+│   └── save.py                   # Checkpoints, configs and stats
+├── analysis/
+│   ├── single_task_*.py          # Learning curves and summaries (Fig 2, App. D-E)
+│   ├── scaling.py                # Parameter scaling (Fig 2)
+│   ├── multitask_switching_plotting_utils.py   # Multitask and task switching (Figs 3-4)
+│   ├── learning_metrics.py       # Learning-speed tables (App. C, K)
+│   ├── cb_ablation.py            # CB ablation and class separation (Fig 5, App. I)
+│   ├── readout_recovery.py       # Readout retraining without the CB (App. I)
+│   ├── pca_dimensionality.py     # Hidden-state dimensionality (App. H)
+│   ├── timescales.py             # Timescales (App. G); data from run_cb_timescales.py
+│   ├── mechanism_plots.py        # Figure 6
+│   └── ...                       # Figure 6 data pipelines (dms_*, parity_*, jacobian, model_stepping)
+└── results/
+    ├── single_task/              # DMS and parity, CB-RNN and RNN at several sizes
+    ├── reservoir_comparisons/    # Reservoir-trained CB-RNNs
+    ├── multi_task/
+    ├── task_switch/
+    ├── GRU_test/                 # GRU controls
+    └── mechanistic_analysis/     # Figure 6 data
 ```

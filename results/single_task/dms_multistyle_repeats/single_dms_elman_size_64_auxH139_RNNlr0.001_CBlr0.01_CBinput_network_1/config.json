@@ -26,12 +26,14 @@
   ],
   "cli_args": {
     "add_heads": 1,
+    "advance_every_epochs": null,
     "affixes": "",
     "afunc": "leakyrelu",
     "aux_rnn_cb": true,
     "aux_rnn_hidden_size": 139,
     "base_path": "./results/single_task/dms_multistyle_repeats",
     "batch_size": 64,
+    "cb_compress_dim": 0,
     "cb_lr": 0.01,
     "cb_max_ratio": 1.0,
     "cb_no_hidden": false,
@@ -68,10 +70,11 @@
     "resume_strict": true,
     "resume_subdir": null,
     "rnn_lr": 0.001,
-    "seed": 2298194953,
+    "seed": 2022242717,
     "shared_optimiser": true,
     "skip_init_phase": false,
     "switch_n": 10,
+    "target_end_n": null,
     "task": "dms",
     "task_switch": false,
     "task_switch_plan": "dms,violation,dms",
@@ -85,9 +88,9 @@
   "host": {
     "cuda_available": true,
     "device": "None",
-    "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+    "platform": "Linux-6.8.0-138-generic-x86_64-with-glibc2.35",
     "python": "3.10.12",
-    "pytorch": "2.13.0+cu126"
+    "pytorch": "2.6.0+cu124"
   },
   "model_config": {
     "cerebellum": {
@@ -100,6 +103,7 @@
     "model": {
       "activation": "LeakyReLU",
       "bias": true,
+      "cb_compress_dim": 0,
       "cb_gc_dim": 512,
       "cb_input_size": 1,
       "cb_max_ratio": 1.0,
@@ -173,5 +177,5 @@
     "curriculum_type": "single",
     "task": "dms"
   },
-  "timestamp_utc": "2026-07-26T13:33:39.439837Z"
+  "timestamp_utc": "2026-09-24T21:42:20.377073Z"
 }

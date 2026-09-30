@@ -29,12 +29,12 @@ def save_model(
     args=None,
     Ns_init=None,
     device=None,
-    subdir_override=None,   # NEW
+    subdir_override=None,
 ):
     if affixes is None:
         affixes = []
 
-    # ---- choose run folder ----
+    # Run folder
     if subdir_override is not None:
         rnn_subdir = subdir_override
         os.makedirs(rnn_subdir, exist_ok=True)
@@ -54,20 +54,19 @@ def save_model(
                 f"{curriculum_type}_{task}{affix_str}network_{network_number}",
             )
 
-        # IMPORTANT: do NOT silently create a new run dir mid-run
-        # If it already exists and this isn't init, just reuse it.
+        # reuse an existing run dir after init; never create a new one mid-run
         if init:
-            os.makedirs(rnn_subdir, exist_ok=False)  # fail fast if collision
+            os.makedirs(rnn_subdir, exist_ok=False)
         else:
-            os.makedirs(rnn_subdir, exist_ok=True)   # reuse existing run dir
+            os.makedirs(rnn_subdir, exist_ok=True)
 
-    # ---- checkpoint filename (inside the same run folder) ----
+    # Checkpoint filename
     if init:
         rnn_name = "rnn_init"
     else:
         rnn_name = f"rnn_N{N_min:d}_N{N_max:d}"
 
-    # ---- write config once ----
+    # Config (written once)
     config_path = os.path.join(rnn_subdir, "config.json")
     if not os.path.exists(config_path):
         save_run_config(
@@ -82,7 +81,7 @@ def save_model(
             filename="config.json",
         )
 
-    # ---- save checkpoint ----
+    # Checkpoint
     filename = os.path.join(rnn_subdir, rnn_name)
     torch.save({"state_dict": model.state_dict()}, filename)
 
@@ -103,7 +102,7 @@ def find_next_free_network_number(
     if len(affixes) > 0:
         affix_str += '_'.join(affixes) + '_'
 
-    # Replicate the folder naming logic from save_model
+    # same folder naming as save_model
     if curriculum_type == 'sliding':
         folder_pattern = f'{curriculum_type}_{n_heads}_{n_forget}_{task}{affix_str}network_{{}}'
     else:
@@ -126,35 +125,27 @@ def count_params(module):
 
 
 def count_model_params(model):
-    """
-    Model-aware parameter counting that works for both Elman and GRU multi-head models.
-
-    Returns a dict with stable top-level keys used downstream (`total`, `trainable`)
-    plus optional breakdown keys when those submodules exist.
-    """
+    """Parameter counts ('total', 'trainable', plus per-module breakdown) for Elman/GRU models."""
     out = count_params(model)
 
     hparams = getattr(model, "_hparams", {}) or {}
     out["model_type"] = hparams.get("model_type", model.__class__.__name__)
 
-    # Readout heads (shared across Elman/GRU in this repo)
     readout_ids = set()
     if hasattr(model, "heads") and model.heads is not None:
         out["readout"] = count_params(model.heads)
         readout_ids = _module_param_ids(model.heads)
 
-    # Optional cerebellar module
     cb_ids = set()
     if hasattr(model, "cb") and model.cb is not None:
         out["cb"] = count_params(model.cb)
         cb_ids = _module_param_ids(model.cb)
 
-    # Core recurrent params = all params excluding readout and CB params.
+    # core recurrent params = all except readout and CB
     excluded = readout_ids | cb_ids
     core_params = [p for p in model.parameters() if id(p) not in excluded]
     out["core"] = _count_from_params(core_params)
 
-    # Convenience aliases for compatibility/readability.
     out["rnn"] = dict(out["core"])
     out["non_cb_trainable"] = int(out["trainable"] - out.get("cb", {"trainable": 0})["trainable"])
 
@@ -170,7 +161,6 @@ def safe_serialize(obj):
         return [safe_serialize(x) for x in obj]
     if isinstance(obj, dict):
         return {str(k): safe_serialize(v) for k, v in obj.items()}
-    # argparse.Namespace
     if hasattr(obj, "__dict__"):
         return {k: safe_serialize(v) for k, v in vars(obj).items()}
     return str(obj)
@@ -228,27 +218,20 @@ def extract_model_config(model):
     if hasattr(model, "_hparams"):
         cfg["model"] = model._hparams
 
-    # Optional CB block
     if hasattr(model, "cb") and model.cb is not None:
         if hasattr(model.cb, "_hparams"):
             cfg["cerebellum"] = model.cb._hparams
 
-    # Include model-aware parameter counts (Elman/GRU compatible).
     cfg["params"] = count_model_params(model)
 
     return cfg
 
 def log_and_save(row, subdir, stats, global_epoch_box,
                  save_every=5, force=False):
-    """
-    global_epoch_box: dict like {"v": 0}
-    save_every: save to disk every N log calls
-    """
-    # increment epoch (persists)
+    """Log a row and save every save_every calls. global_epoch_box is a dict like {'v': 0}."""
     global_epoch_box["v"] += 1
     ep = global_epoch_box["v"]
 
-    # append always
     stats["n_task"].append(row["N"])
     stats["phase"].append(row["phase"])
     stats["loss"].append(row["loss"])
@@ -259,7 +242,6 @@ def log_and_save(row, subdir, stats, global_epoch_box,
 
     final_path = os.path.join(subdir, "stats.npy")
     tmp_path = os.path.join(subdir, "stats_temp.npy")
-    # only save sometimes
     n_rows = len(stats["epoch"])
     if force or (save_every is not None and n_rows % save_every == 0):
         np.save(tmp_path, stats)
@@ -267,10 +249,7 @@ def log_and_save(row, subdir, stats, global_epoch_box,
         print("SAVED", row["phase"], row["N"], "epoch", ep, "rows", n_rows, flush=True)
 
 def make_unique_dir(path: str) -> str:
-    """
-    If `path` exists, append _v2, _v3, ... until unique.
-    Returns the final directory path (created).
-    """
+    """Append _v2, _v3, ... to `path` until unique, then create it."""
     base = path
     k = 1
     while os.path.exists(path):
@@ -282,7 +261,7 @@ def make_unique_dir(path: str) -> str:
 def match_aux_hidden_size(target_params, input_size, main_hidden_size,
                            search_range=range(2, 400), tau=1.5, bias=True):
     best_H2, best_diff, best_count = None, None, None
-    from model.models_cb import RecurrentAuxModule
+    from model.cb_rnn import RecurrentAuxModule
     for H2 in search_range:
         aux = RecurrentAuxModule(
             input_size=input_size,

@@ -10,16 +10,16 @@ from tqdm import tqdm
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tasks.task_registry import TASK_SPECS, compute_loss
+from tasks.registry import TASK_SPECS, compute_loss
 from save import save_model, find_next_free_network_number, make_unique_dir
 
-from model.models_cb import ElmanRNNMultiHead
-from model.GRU_test import GRUMultiHeadWithCB
+from model.cb_rnn import ElmanRNNMultiHead
+from model.cb_gru import GRUMultiHeadWithCB
 
-from tasks.multitask_impl import multitask_train, MULTITASK_TASKS
-from tasks.continual_impl import continual_train
-from tasks.task_switch_one import switch_train
-from training.train_reservoir import train_reservoir
+from tasks.multitask import multitask_train, MULTITASK_TASKS
+from tasks.continual import continual_train
+from tasks.task_switch import switch_train
+from training.reservoir import train_reservoir
 
 
 def parse_optional_int(value):
@@ -56,6 +56,7 @@ def train(
     patience=1,
     subdir_override=None,
     stage_tag=None,
+    advance_every_epochs=None,
 ):
     stats = {
         "stage": [],
@@ -121,6 +122,8 @@ def train(
 
     try:
         solved_streak = 0
+        # epoch of the last fixed-schedule advance (only used if advance_every_epochs is set)
+        last_advance_epoch = -1
 
         for epoch in tqdm(range(num_epochs)):
             losses_step = []
@@ -169,7 +172,7 @@ def train(
 
             losses.append(np.mean(losses_step) if losses_step else np.nan)
 
-            # ---- Testing ----
+            # Testing
             metric_accumulator = []
 
             model.eval()
@@ -284,7 +287,7 @@ def train(
 
             np.save(os.path.join(subdir, "stats.npy"), stats)
 
-            # ---- Curriculum advancement ----
+            # Curriculum advancement
             metric_for_curriculum = {
                 "score": float(np.mean([m["score"] for m in metric_accumulator]))
             }
@@ -306,13 +309,22 @@ def train(
                 if vals:
                     metric_for_curriculum[key] = float(np.mean(vals))
 
-            if spec["advance_fn"](metric_for_curriculum):
+            if advance_every_epochs is not None:
+                # fixed schedule: advance N every advance_every_epochs epochs regardless of accuracy
+                should_advance = (epoch - last_advance_epoch) >= advance_every_epochs
+            else:
+                should_advance = spec["advance_fn"](metric_for_curriculum)
+
+            if should_advance:
                 if target_end_n is not None and Ns[-1] >= target_end_n:
                     pass
 
                 else:
                     old_Ns = list(Ns)
                     ct = str(curriculum_type).strip().lower()
+
+                    if advance_every_epochs is not None:
+                        last_advance_epoch = epoch
 
                     print(
                         f"[ADVANCE TRIGGERED] curriculum_type={repr(curriculum_type)} | "
@@ -425,6 +437,10 @@ if __name__ == "__main__":
     parser.add_argument("--gc_dim", type=int, default=512)
     parser.add_argument("--pc_dim", type=int, default=64)
     parser.add_argument("--cb_max_ratio", type=float, default=1.0)
+    parser.add_argument("--cb_compress_dim", type=int, default=0,
+                         help="If >0, insert a linear bottleneck of this width between "
+                              "(h, x) and the GC expansion (mossy-fibre-like compression "
+                              "before expansion). 0 disables it (default, backward-compatible).")
 
     parser.add_argument("--cb_sees_input", action="store_true", default=False)
     parser.add_argument("--cb_no_hidden", dest="cb_no_hidden", action="store_true", default=False)
@@ -439,7 +455,7 @@ if __name__ == "__main__":
         default=False,
     )
 
-    # Backward-compatible alias for old scripts.
+    # alias for old scripts
     parser.add_argument(
         "--use_alternating_in_switch",
         dest="use_reservoir_in_switch",
@@ -450,6 +466,10 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--training_steps", type=int, default=100)
     parser.add_argument("--test_steps", type=int, default=50)
+
+    # fixed-schedule curriculum: advance N every advance_every_epochs epochs until target_end_n
+    parser.add_argument("--advance_every_epochs", type=int, default=None)
+    parser.add_argument("--target_end_n", type=int, default=None)
 
     parser.add_argument("--multitask", action="store_true", default=False)
     parser.add_argument("--mt_target_n", type=parse_optional_int, default=150)
@@ -478,7 +498,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--reservoir_interval_n", type=int, default=10)
 
-    # Backward-compatible alias for old reservoir scripts.
+    # alias for old reservoir scripts
     parser.add_argument(
         "--cb_reservoir_n",
         dest="reservoir_interval_n",
@@ -552,7 +572,7 @@ if __name__ == "__main__":
     NUM_CLASSES = spec["output_size"]
     START_N = spec.get("start_n", 2)
 
-    # ---- Curriculum setup ----
+    # Curriculum setup
     if CURRICULUM == "cumulative":
         Ns_init = list(np.arange(START_N, START_N + INIT_HEADS))
 
@@ -569,7 +589,7 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"Unrecognized curriculum type: {CURRICULUM}")
 
-    # Backward compatibility: old scripts may still say "alternating".
+    # old scripts may say "alternating"
     if CURRICULUM == "alternating":
         print("[compat] curriculum_type='alternating' mapped to reservoir training.", flush=True)
 
@@ -581,7 +601,7 @@ if __name__ == "__main__":
         n_tokens = re.findall(r"N(\d+)", name)
         return int(n_tokens[-1]) if n_tokens else None
 
-    # ---- Readout head count ----
+    # Readout head count
     if CURRICULUM == "cumulative":
         MAX_N = 150
         NUM_READOUT_HEADS = MAX_N - START_N + 1
@@ -618,7 +638,7 @@ if __name__ == "__main__":
     TEST_STEPS = args.test_steps
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # ---- Build affixes ----
+    # Run-name affixes
     AFFIXES += [args.model_type]
 
     if NUM_NEURONS != 500:
@@ -632,6 +652,9 @@ if __name__ == "__main__":
 
             if args.pc_dim != 64:
                 AFFIXES += [f"pc{args.pc_dim}"]
+
+            if args.cb_compress_dim > 0:
+                AFFIXES += [f"compress{args.cb_compress_dim}"]
     else:
         AFFIXES += ["noCB"]
 
@@ -662,6 +685,9 @@ if __name__ == "__main__":
     if not args.shared_optimiser:
         AFFIXES += ["opts"]
 
+    if args.advance_every_epochs is not None:
+        AFFIXES += [f"fixedsched{args.advance_every_epochs}", f"targetN{args.target_end_n}"]
+
     if args.affixes:
         AFFIXES += [args.affixes]
 
@@ -688,11 +714,16 @@ if __name__ == "__main__":
                 cb_input_size=cb_input_size,
                 cb_no_hidden=cb_no_hidden,
                 cb_max_ratio=args.cb_max_ratio,
+                cb_compress_dim=args.cb_compress_dim,
                 rnn_aux_ctrl=args.aux_rnn_cb,
                 aux_hidden_size=args.aux_rnn_hidden_size,
             ).to(device)
 
         if args.model_type == "gru":
+            if args.cb_compress_dim > 0:
+                raise NotImplementedError(
+                    "cb_compress_dim is not wired up for GRUMultiHeadWithCB."
+                )
             return GRUMultiHeadWithCB(
                 input_size=input_size,
                 hidden_size=hidden_size,
@@ -710,7 +741,7 @@ if __name__ == "__main__":
 
         raise ValueError(f"Unknown model_type: {args.model_type}")
 
-    # ---- Build model ----
+    # Model
     cb_input_size = INPUT_SIZE if (args.cb_sees_input or args.cb_no_hidden) else 0
 
     if args.multitask:
@@ -752,7 +783,7 @@ if __name__ == "__main__":
             cb_no_hidden=args.cb_no_hidden,
         )
 
-    # ---- Optional resume ----
+    # Resume
     if args.resume_ckpt:
         ckpt = torch.load(args.resume_ckpt, map_location=device)
         state_dict = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
@@ -788,9 +819,7 @@ if __name__ == "__main__":
         else:
             print("[resume] Could not infer N from checkpoint name; keeping current Ns_init.", flush=True)
 
-    # ---------------------------------------------------------------
-    # TASK SWITCHING
-    # ---------------------------------------------------------------
+    # Task switching
     if args.task_switch:
         plan = [t.strip() for t in args.task_switch_plan.split(",") if t.strip()]
 
@@ -975,9 +1004,7 @@ if __name__ == "__main__":
         print("[task_switch] COMPLETE", flush=True)
         sys.exit(0)
 
-    # ---------------------------------------------------------------
-    # MULTITASK
-    # ---------------------------------------------------------------
+    # Multitask
     if args.multitask:
         for task_name in MULTITASK_TASKS:
             if task_name not in TASK_SPECS:
@@ -1051,9 +1078,7 @@ if __name__ == "__main__":
 
         sys.exit(0)
 
-    # ---------------------------------------------------------------
-    # CONTINUAL
-    # ---------------------------------------------------------------
+    # Continual
     if args.continual:
         plan = [t.strip() for t in args.continual_plan.split(",") if t.strip()]
 
@@ -1130,9 +1155,7 @@ if __name__ == "__main__":
 
         sys.exit(0)
 
-    # ---------------------------------------------------------------
-    # CT SWITCH
-    # ---------------------------------------------------------------
+    # CT switch
     if args.ct_switch:
         plan = [t.strip() for t in args.continual_plan.split(",") if t.strip()]
 
@@ -1210,9 +1233,7 @@ if __name__ == "__main__":
 
         sys.exit(0)
 
-    # ---------------------------------------------------------------
-    # RESERVOIR / STANDARD TRAINING
-    # ---------------------------------------------------------------
+    # Reservoir / standard training
     if CURRICULUM in ("reservoir", "alternating"):
         train_reservoir(
             model=rnn,
@@ -1263,22 +1284,6 @@ if __name__ == "__main__":
                 flush=True,
             )
 
-        # cb_param_ids = (
-        #     {id(p) for p in rnn.cb.parameters()}
-        #     if getattr(rnn, "cb", None) is not None
-        #     else set()
-        # )
-
-        # non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
-        # cb_params = [p for p in rnn.parameters() if id(p) in cb_param_ids]
-
-        # param_groups = []
-        # if non_cb_params:
-        #     param_groups.append({"params": non_cb_params, "lr": args.rnn_lr})
-        # if cb_params:
-        #     param_groups.append({"params": cb_params, "lr": args.cb_lr})
-
-        # optimizer = torch.optim.SGD(param_groups, momentum=0.1, nesterov=True)
         if getattr(args, "aux_rnn_cb", False) and getattr(rnn, "cb", None) is not None:
             cb_param_ids = {id(p) for p in rnn.cb.parameters()}
             non_cb_params = [p for p in rnn.parameters() if id(p) not in cb_param_ids]
@@ -1311,4 +1316,6 @@ if __name__ == "__main__":
             affixes=AFFIXES,
             n_forget=NUM_FORGET,
             subdir_override=args.resume_subdir,
+            target_end_n=args.target_end_n if args.target_end_n is not None else 150,
+            advance_every_epochs=args.advance_every_epochs,
         )
